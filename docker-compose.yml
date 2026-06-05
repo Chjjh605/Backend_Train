@@ -1,0 +1,25 @@
+version: '3.8'
+
+services:
+  # 로컬 테스트용 MySQL 띄우기
+  mysql:
+    image: mysql:8.0
+    container_name: trail-mysql-local
+    ports:
+      - "3306:3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpassword # 로컬용 임시 비밀번호
+      MYSQL_DATABASE: trail_db         # 실행 시 자동으로 만들어질 DB 이름
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+
+  # 로컬 테스트용 Redis 띄우기
+  redis:
+    image: redis:7
+    container_name: trail-redis-local
+    ports:
+      - "6379:6379"
+
+volumes:
+  mysql_data: # 컴퓨터 껐다 켜도 DB 데이터 안 날아가게 보존
