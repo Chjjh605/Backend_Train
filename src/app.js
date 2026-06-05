@@ -1,7 +1,17 @@
 const express = require('express');
 const Redis = require('ioredis');
 const { SQSClient, SendMessageCommand } = require('@aws-sdk/client-sqs');
+const mysql = require('mysql2/promise');
 const config = require('./config'); // 중앙 설정 파일 로드
+
+// MySQL DB 커넥션 풀 생성
+const pool = mysql.createPool({
+  host: config.db.host,
+  user: config.db.user,
+  password: config.db.password,
+  database: config.db.name,
+  connectionLimit: 10
+});
 
 const app = express();
 app.use(express.json());
@@ -43,30 +53,35 @@ redis.defineCommand('reserveSeat', {
 // 예매 API (DB 직접 저장이 아닌 SQS로 전송)
 app.post('/api/reserve', async (req, res) => {
   const { userId, trainId } = req.body;
-
+  let isReservedInRedis = false;
   try {
-    // Redis에서 수량 차감 및 중복 체크
+
+    // 1. Redis 수량 차감 및 중복 체크
     const result = await redis.reserveSeat(`train:${trainId}:seats`, `train:${trainId}:user:${userId}`);
-
     if (result === -1) return res.status(400).json({ message: '매진' });
-    if (result === -2) return res.status(400).json({ message: '이미 예약됨' });
+    if (result === -2) return res.status(400).json({ message: '이미 예약됨' });    
+    isReservedInRedis = true; // Redis 예약 성공 표시
 
-    // MySQL 직접 저장을 빼고, AWS SQS로 메시지 전송
+    // 2. SQS 메시지 전송
     const messageBody = JSON.stringify({ userId, trainId, status: 'PENDING', timestamp: Date.now() });
-
     const command = new SendMessageCommand({
       QueueUrl: SQS_QUEUE_URL,
       MessageBody: messageBody,
     });
-
     await sqsClient.send(command);
-
-    // 유저에게는 예약 접수로 응답 (실제 DB 저장은 백그라운드에서 진행)
-    res.json({ success: true, message: '예약 요청이 SQS 대기열에 등록되었습니다.' });
-
+    res.json({ success: true, message: '예약 요청이 대기열에 등록되었습니다.' });
   } catch (err) {
-    console.error('서버 에러:', err);
-    res.status(500).json({ message: '에러 발생' });
+    console.error('❌ 예약 요청 처리 중 에러 발생:', err);
+
+    // 3. [롤백 로직] Redis 예약은 성공했으나 SQS 전송에 실패했을 때 원상 복구
+    if (isReservedInRedis) {
+      console.log(`🔄 [Rollback] SQS 전송 실패로 인해 Redis 상태를 롤백합니다. (User: ${userId}, Train: ${trainId})`);
+      const rollbackPipeline = redis.pipeline();
+      rollbackPipeline.incr(`train:${trainId}:seats`);              // 좌석 복구
+      rollbackPipeline.del(`train:${trainId}:user:${userId}`);      // 예약 대기 상태 해제
+      await rollbackPipeline.exec();
+    }
+    res.status(500).json({ message: '예약 요청 실패 (서버 에러)' });
   }
 });
 
@@ -74,18 +89,97 @@ app.post('/api/reserve', async (req, res) => {
 app.get('/api/trains/:trainId', async (req, res) => {
   const { trainId } = req.params;
   try {
-    // 1. DB로 가지 않고 Redis 캐시에서 먼저 좌석 수량을 조회
-    const seats = await redis.get(`train:${trainId}:seats`);
 
+    // 1. Redis 캐시 조회
+    let seats = await redis.get(`train:${trainId}:seats`);
     if (seats === null) {
-      // 만약 Redis에 데이터가 없으면 평상시엔 DB에서 긁어와야 하지만, 
-      // 인프라 테스트용이므로 임시 값 반환 혹은 데이터 없음 처리
-      return res.status(404).json({ message: "열차 정보가 캐시에 없습니다. 초기화가 필요합니다." });
+      console.log(`ℹ️ Cache Miss - DB에서 열차 ${trainId} 데이터를 로드합니다.`);
+      
+      // 2. 캐시 미스 시 DB에서 데이터 조회
+      const [rows] = await pool.execute(
+        'SELECT available_seats FROM trains WHERE id = ?',
+        [trainId]
+      );
+      if (rows.length === 0) {
+        return res.status(404).json({ message: "존재하지 않는 열차입니다." });
+      }
+      seats = rows[0].available_seats;
+      
+      // 3. Redis 캐시에 다시 쓰기 (만료 시간 설정 권장, 예: 1시간)
+      await redis.set(`train:${trainId}:seats`, seats, 'EX', 3600);
+    }
+    res.json({ trainId, availableSeats: parseInt(seats, 10) });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "조회 중 에러 발생" });
+  }
+});
+
+// 예약 확정 (결제 완료) API
+app.post('/api/reserve/confirm', async (req, res) => {
+  const { userId, trainId } = req.body;
+
+  if (!userId || !trainId) {
+    return res.status(400).json({ message: 'userId와 trainId가 필요합니다.' });
+  }
+
+  const userKey = `train:${trainId}:user:${userId}`;
+
+  try {
+    // 1. Redis에서 임시 예약 상태 확인
+    const status = await redis.get(userKey);
+    if (!status) {
+      return res.status(400).json({ message: '예약 대기 시간이 만료되었거나 예약 요청 내역이 없습니다.' });
+    }
+    if (status === 'SUCCESS') {
+      return res.status(400).json({ message: '이미 확정된 예약입니다.' });
+    }
+    if (status !== 'PENDING') {
+      return res.status(400).json({ message: '유효하지 않은 예약 상태입니다.' });
     }
 
-    res.json({ trainId, availableSeats: parseInt(seats) });
+    // 2. MySQL DB에서 예약 확정 및 좌석 실차감 트랜잭션 처리
+    const connection = await pool.getConnection();
+    try {
+      await connection.beginTransaction();
+
+      // DB 상에 PENDING 상태의 예약이 존재하는지 확인 및 ID 획득
+      const [reservations] = await connection.execute(
+        'SELECT id FROM reservations WHERE user_id = ? AND train_id = ? AND status = "PENDING" LIMIT 1',
+        [userId, trainId]
+      );
+
+      if (reservations.length === 0) {
+        // SQS 비동기 처리가 밀려 DB에 아직 저장되지 않았을 경우를 고려
+        throw new Error('예약 요청이 아직 처리 중입니다. 잠시 후 다시 결제를 시도해 주세요.');
+      }
+
+      const reservationId = reservations[0].id;
+
+      // A. reservations 테이블 status 변경 (PENDING -> SUCCESS)
+      await connection.execute(
+        'UPDATE reservations SET status = "SUCCESS" WHERE id = ?',
+        [reservationId]
+      );
+
+      await connection.commit();
+
+      // 3. Redis 유저 예약 상태 업데이트 (SUCCESS로 변경하고 하루 동안 유지)
+      await redis.set(userKey, 'SUCCESS', 'EX', 86400);
+
+      res.json({ success: true, message: '예약이 성공적으로 확정되었습니다.', reservationId });
+
+    } catch (dbErr) {
+      await connection.rollback();
+      console.error('❌ DB 트랜잭션 오류:', dbErr.message);
+      res.status(400).json({ message: dbErr.message || '예약 확정 처리 중 오류가 발생했습니다.' });
+    } finally {
+      connection.release();
+    }
+
   } catch (err) {
-    res.status(500).json({ message: "조회 중 에러 발생" });
+    console.error('서버 에러:', err);
+    res.status(500).json({ message: '서버 내부 오류가 발생했습니다.' });
   }
 });
 

@@ -1,10 +1,9 @@
 ## users (회원 테이블)
 CREATE TABLE users (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
-    cognito_sub VARCHAR(255) NOT NULL UNIQUE, -- AWS Cognito JWT 검증용 식별자
+    cognito_sub VARCHAR(255) NOT NULL UNIQUE, -- AWS Cognito JWT 검증용 식별자 (자동으로 Unique Index 생성됨)
     email VARCHAR(255) NOT NULL UNIQUE,       -- SES 발송용 이메일
-    name VARCHAR(50) NOT NULL,
-    INDEX idx_cognito_sub (cognito_sub)
+    name VARCHAR(50) NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 ## trains (기차 및 구간 정보 테이블)
@@ -27,8 +26,8 @@ CREATE TABLE reservations (
     status ENUM('PENDING', 'SUCCESS', 'CANCELLED') NOT NULL DEFAULT 'PENDING', -- PENDING, SUCCESS, CANCELLED
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     
-    FOREIGN KEY (user_id) REFERENCES users (id),
-    FOREIGN KEY (train_id) REFERENCES trains (id),
+    FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE,
+    FOREIGN KEY (train_id) REFERENCES trains (id) ON DELETE RESTRICT,
     INDEX idx_user_id (user_id),               -- 마이페이지 조회 최적화
     INDEX idx_train_status (train_id, status) -- SQS 동기화 및 잔여석 정산 최적화
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
