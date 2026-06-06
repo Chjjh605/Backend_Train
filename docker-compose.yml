@@ -14,12 +14,17 @@ services:
       - mysql_data:/var/lib/mysql
       - ./init.sql:/docker-entrypoint-initdb.d/init.sql
 
-  # 로컬 테스트용 Redis 띄우기
+  # 로컬 테스트용 Redis 클러스터 띄우기
   redis:
-    image: redis:7
-    container_name: trail-redis-local
+    image: grokzen/redis-cluster:latest
+    container_name: train-redis-cluster
     ports:
-      - "6379:6379"
+      - "7000-7001:7000-7001"  # 클러스터 모드가 사용하는 포트 범위 오픈
+    environment:
+      - IP=0.0.0.0             # 로컬 호스트 통신 바인딩 허용
+      - INITIAL_PORT=7000
+      - MASTERS=2              # 샤드(마스터 노드) 개수: 2개
+      - SLAVES_PER_MASTER=0    # 마스터당 복제본 개수: 0개
 
 volumes:
   mysql_data: # 컴퓨터 껐다 켜도 DB 데이터 안 날아가게 보존

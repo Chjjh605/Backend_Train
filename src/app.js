@@ -25,11 +25,13 @@ app.get('/health', (req, res) => {
   res.status(200).send('OK');
 });
 
-// Redis 연결
-const redis = new Redis({
-  host: config.redis.host,
-  port: config.redis.port
-});
+// Redis 캐시 서버 연결
+const redis = new Redis.Cluster([
+  {
+    host: config.redis.host,
+    port: config.redis.port
+  }
+]);
 
 // AWS SQS 클라이언트 세팅
 const sqsClient = new SQSClient({
@@ -57,7 +59,7 @@ app.post('/api/reserve', async (req, res) => {
   try {
 
     // 1. Redis 수량 차감 및 중복 체크
-    const result = await redis.reserveSeat(`train:${trainId}:seats`, `train:${trainId}:user:${userId}`);
+    const result = await redis.reserveSeat(`{train:${trainId}}:seats`, `{train:${trainId}}:user:${userId}`);
     if (result === -1) return res.status(400).json({ message: '매진' });
     if (result === -2) return res.status(400).json({ message: '이미 예약됨' });    
     isReservedInRedis = true; // Redis 예약 성공 표시
@@ -77,8 +79,8 @@ app.post('/api/reserve', async (req, res) => {
     if (isReservedInRedis) {
       console.log(`🔄 [Rollback] SQS 전송 실패로 인해 Redis 상태를 롤백합니다. (User: ${userId}, Train: ${trainId})`);
       const rollbackPipeline = redis.pipeline();
-      rollbackPipeline.incr(`train:${trainId}:seats`);              // 좌석 복구
-      rollbackPipeline.del(`train:${trainId}:user:${userId}`);      // 예약 대기 상태 해제
+      rollbackPipeline.incr(`{train:${trainId}}:seats`);              // 좌석 복구
+      rollbackPipeline.del(`{train:${trainId}}:user:${userId}`);      // 예약 대기 상태 해제
       await rollbackPipeline.exec();
     }
     res.status(500).json({ message: '예약 요청 실패 (서버 에러)' });
@@ -91,7 +93,7 @@ app.get('/api/trains/:trainId', async (req, res) => {
   try {
 
     // 1. Redis 캐시 조회
-    let seats = await redis.get(`train:${trainId}:seats`);
+    let seats = await redis.get(`{train:${trainId}}:seats`);
     if (seats === null) {
       console.log(`ℹ️ Cache Miss - DB에서 열차 ${trainId} 데이터를 로드합니다.`);
       
@@ -106,7 +108,7 @@ app.get('/api/trains/:trainId', async (req, res) => {
       seats = rows[0].available_seats;
       
       // 3. Redis 캐시에 다시 쓰기 (만료 시간 설정 권장, 예: 1시간)
-      await redis.set(`train:${trainId}:seats`, seats, 'EX', 3600);
+      await redis.set(`{train:${trainId}}:seats`, seats, 'EX', 3600);
     }
     res.json({ trainId, availableSeats: parseInt(seats, 10) });
   } catch (err) {
@@ -123,7 +125,7 @@ app.post('/api/reserve/confirm', async (req, res) => {
     return res.status(400).json({ message: 'userId와 trainId가 필요합니다.' });
   }
 
-  const userKey = `train:${trainId}:user:${userId}`;
+  const userKey = `{train:${trainId}}:user:${userId}`;
 
   try {
     // 1. Redis에서 임시 예약 상태 확인

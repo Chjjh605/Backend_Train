@@ -4,10 +4,12 @@ const Redis = require('ioredis');
 const config = require('./config'); // 중앙 설정 파일 로드
 
 // Redis 캐시 서버 연결
-const redis = new Redis({
-  host: config.redis.host,
-  port: config.redis.port
-});
+const redis = new Redis.Cluster([
+  {
+    host: config.redis.host,
+    port: config.redis.port
+  }
+]);
 
 redis.on('connect', () => console.log('⚡ Worker: Redis 캐시 서버 연결 완료!'));
 
@@ -134,8 +136,8 @@ async function cleanupExpiredReservations() {
         );
 
         // C. Redis 복구 (좌석 수 +1, 유저 임시 키 삭제)
-        const userKey = `train:${train_id}:user:${user_id}`;
-        const seatKey = `train:${train_id}:seats`;
+        const userKey = `{train:${train_id}}:user:${user_id}`;
+        const seatKey = `{train:${train_id}}:seats`;
 
         const pipeline = redis.pipeline();
         pipeline.incr(seatKey);
