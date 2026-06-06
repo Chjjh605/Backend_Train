@@ -18,7 +18,11 @@ docker-compose up -d
 docker-compose down -v
 ```
 
-### 3) 백엔드 어플리케이션 실행
+### 3) AWS SQS 생성
+AWS 콘솔에서 SQS 큐를 생성합니다.
+생성 후 SQS UR을 '.env' 파일에 입력합니다
+
+### 4) 백엔드 어플리케이션 실행
 
 #### ■ API 웹서버 실행 (Express)
 사용자의 열차 조회 및 예약 접수/확정 API를 가동합니다. (기본 포트: 8080)
