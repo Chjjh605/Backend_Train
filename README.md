@@ -1,10 +1,9 @@
-## 💻 1. 로컬 환경 테스트 가이드 (Docker Compose)
 
-로컬 PC에서 가상 인프라(MySQL, Redis)를 Docker로 실행하고 로컬 Node.js 서버 프로세스를 구동하여 기능 및 API를 테스트하는 방법입니다.
+## ⚙️ 로컬 개발 환경 실행 가이드 -> AWS RDS연동이면 할 필요 없습니다
 
-### ⚙️ 로컬 테스트 명령어
+로컬에서 소스 코딩 후 동작 확인 및 디버깅을 하기 위한 가이드입니다.
 
-#### 1) 의존성 설치
+### 1) 의존성 라이브러리 설치
 ```bash
 npm install
 ```
@@ -15,19 +14,26 @@ npm install
 docker-compose up -d
 ```
 
-#### 3) API 웹서버 실행
+### 3) AWS SQS 생성
+AWS 콘솔에서 SQS 큐를 생성합니다.
+생성 후 SQS UR을 '.env' 파일에 입력합니다
+
+### 4) 백엔드 어플리케이션 실행
+
+#### ■ API 웹서버 실행 (Express)
+사용자의 열차 조회 및 예약 접수/확정 API를 가동합니다. (기본 포트: 8080)
 ```bash
 # 로컬 개발 API 서버 가동 (http://localhost:8080)
 npm start
 ```
 
-#### 4) 비동기 DB 이관 워커 실행
+#### 5) 비동기 DB 이관 워커 실행
 ```bash
 # SQS 대기열 감시 및 MySQL 데이터 이관, 만료 정리 워커 가동
 npm run worker
 ```
 
-#### 5) 로컬 환경 정리
+#### 6) 로컬 환경 정리
 ```bash
 # 테스트 종료 후 도커 컨테이너 중지 및 볼륨 삭제
 docker-compose down -v
@@ -104,5 +110,6 @@ git commit -m "이름: 커밋 메시지"
 # 원격 저장소에 푸시 후 공유
 git push origin main
 
+<<<<<<< HEAD
 # 푸시가 완료되면 반드시 팀 톡방에 알림을 남겨주세요!
 ```
