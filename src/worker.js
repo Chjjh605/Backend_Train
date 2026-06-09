@@ -22,7 +22,10 @@ const pool = mysql.createPool({
   user: config.db.user,
   password: config.db.password,
   database: config.db.name,
-  connectionLimit: 20 // pod 갯수 * 커넥션리밋 = 총 커넥션
+  connectionLimit: 20, // pod 갯수 * 커넥션리밋 = 총 커넥션
+  ssl: {
+    rejectUnauthorized: false
+  }
 });
 
 // 무한 루프로 SQS 감시 및 DB 저장

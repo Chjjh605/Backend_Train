@@ -11,7 +11,10 @@ const pool = mysql.createPool({
   user: config.db.user,
   password: config.db.password,
   database: config.db.name,
-  connectionLimit: 10
+  connectionLimit: 10,
+  ssl: {
+    rejectUnauthorized: false
+  }
 });
 
 const app = express();
