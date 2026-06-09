@@ -12,18 +12,18 @@ services:
       MYSQL_DATABASE: trail_db         # 실행 시 자동으로 만들어질 DB 이름
     volumes:
       - mysql_data:/var/lib/mysql
-      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+      - ./init-new.sql:/docker-entrypoint-initdb.d/init.sql
 
   # 로컬 테스트용 Redis 클러스터 띄우기
   redis:
     image: grokzen/redis-cluster:latest
     container_name: train-redis-cluster
     ports:
-      - "7000-7001:7000-7001"  # 클러스터 모드가 사용하는 포트 범위 오픈
+      - "7000-7002:7000-7002"  # 클러스터 모드가 사용하는 포트 범위 오픈
     environment:
-      - IP=0.0.0.0             # 로컬 호스트 통신 바인딩 허용
+      - IP=127.0.0.1             # 로컬 호스트 통신 바인딩 허용
       - INITIAL_PORT=7000
-      - MASTERS=2              # 샤드(마스터 노드) 개수: 2개
+      - MASTERS=3              # 샤드(마스터 노드) 개수: 3개
       - SLAVES_PER_MASTER=0    # 마스터당 복제본 개수: 0개
 
 volumes:
