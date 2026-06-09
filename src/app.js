@@ -15,8 +15,13 @@ const pool = mysql.createPool({
 });
 
 const app = express();
+// ALLOWED_ORIGINS가 쉼표로 구분된 여러 도메인일 경우 배열로 파싱하여 허용
+const origins = config.allowedOrigins
+  ? (config.allowedOrigins.includes(',') ? config.allowedOrigins.split(',') : config.allowedOrigins)
+  : '*';
+
 app.use(cors({
-  origin: config.allowedOrigins,
+  origin: origins,
   credentials: true
 }));
 app.use(express.json());
