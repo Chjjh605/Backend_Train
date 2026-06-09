@@ -1,4 +1,5 @@
 const express = require('express');
+const cors = require('cors');
 const Redis = require('ioredis');
 const { SQSClient, SendMessageCommand } = require('@aws-sdk/client-sqs');
 const mysql = require('mysql2/promise');
@@ -14,6 +15,10 @@ const pool = mysql.createPool({
 });
 
 const app = express();
+app.use(cors({
+  origin: config.allowedOrigins,
+  credentials: true
+}));
 app.use(express.json());
 
 // Route 53 헬스체크용 엔드포인트
@@ -61,7 +66,7 @@ app.post('/api/reserve', async (req, res) => {
     // 1. Redis 수량 차감 및 중복 체크
     const result = await redis.reserveSeat(`{train:${trainId}}:seats`, `{train:${trainId}}:user:${userId}`);
     if (result === -1) return res.status(400).json({ message: '매진' });
-    if (result === -2) return res.status(400).json({ message: '이미 예약됨' });    
+    if (result === -2) return res.status(400).json({ message: '이미 예약됨' });
     isReservedInRedis = true; // Redis 예약 성공 표시
 
     // 2. SQS 메시지 전송
@@ -96,7 +101,7 @@ app.get('/api/trains/:trainId', async (req, res) => {
     let seats = await redis.get(`{train:${trainId}}:seats`);
     if (seats === null) {
       console.log(`ℹ️ Cache Miss - DB에서 열차 ${trainId} 데이터를 로드합니다.`);
-      
+
       // 2. 캐시 미스 시 DB에서 데이터 조회
       const [rows] = await pool.execute(
         'SELECT available_seats FROM trains WHERE id = ?',
@@ -106,7 +111,7 @@ app.get('/api/trains/:trainId', async (req, res) => {
         return res.status(404).json({ message: "존재하지 않는 열차입니다." });
       }
       seats = rows[0].available_seats;
-      
+
       // 3. Redis 캐시에 다시 쓰기 (만료 시간 설정 권장, 예: 1시간)
       await redis.set(`{train:${trainId}}:seats`, seats, 'EX', 3600);
     }

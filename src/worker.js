@@ -29,7 +29,7 @@ const pool = mysql.createPool({
 async function pollMessages() {
   console.log('👀 Worker 서버가 SQS 우체통 감시를 시작합니다...');
 
-  while (true) {
+  while (!isShuttingDown) {
     try {
       // [STEP 1] SQS에서 메시지 꺼내오기
       const data = await sqsClient.send(new ReceiveMessageCommand({
@@ -37,6 +37,8 @@ async function pollMessages() {
         MaxNumberOfMessages: 10, // 최대갯수 = 10
         WaitTimeSeconds: 20 // 20초 동안 큐에 데이터가 들어오길 기다림 (롱 폴링 비용 절감)
       }));
+
+      if (isShuttingDown) break;
 
       if (data.Messages && data.Messages.length > 0) {
         for (const msg of data.Messages) {
@@ -57,7 +59,7 @@ async function pollMessages() {
                 [body.userId, body.trainId]
               );
               // B. trains 테이블 실제 잔여 좌석 차감 (available_seats > 0 검증 포함)
-                          const [updateResult] = await connection.execute(
+              const [updateResult] = await connection.execute(
                 'UPDATE trains SET available_seats = available_seats - 1 WHERE id = ? AND available_seats > 0',
                 [body.trainId]
               );
@@ -89,11 +91,37 @@ async function pollMessages() {
         }
       }
     } catch (error) {
+      if (isShuttingDown) {
+        console.log('🔌 DB 커넥션 종료에 따른 폴링 루프 중단.');
+        break;
+      }
       // 바깥쪽 에러는 대기열 메시지 처리 실패가 아니라 SQS 연결 오류 등이므로 로그만 찍고 넘어감
       console.error('❌ Worker 서버 작동 중 에러 발생:', error.message);
     }
   }
 }
+
+// worker.js 종료 처리 핸들러 추가
+let isShuttingDown = false;
+
+async function gracefulShutdown(signal) {
+  if (isShuttingDown) return;
+  isShuttingDown = true;
+  console.log(`\n🛑 ${signal} 수신. Worker를 안전하게 종료합니다...`);
+
+  try {
+    console.log('🔌 DB Connection Pool 종료 중...');
+    await pool.end();
+    console.log('✅ DB Connection Pool 안전 종료 완료.');
+    process.exit(0);
+  } catch (err) {
+    console.error('❌ 종료 처리 중 에러 발생:', err);
+    process.exit(1);
+  }
+}
+
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 
 // Worker 실행
 pollMessages();
@@ -120,7 +148,7 @@ async function cleanupExpiredReservations() {
 
     for (const reservation of expiredRows) {
       const { id, user_id, train_id } = reservation;
-      
+
       await connection.beginTransaction();
       try {
         // A. DB 상태 업데이트 (PENDING -> CANCELLED)
