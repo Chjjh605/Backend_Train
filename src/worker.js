@@ -4,9 +4,13 @@ const Redis = require('ioredis');
 const config = require('./config'); // 중앙 설정 파일 로드
 
 // Redis 캐시 서버 연결 (로컬 개발 환경에서는 단일 노드, AWS EKS 배포 환경에서는 Cluster 모드로 가동)
-const redis = (config.redis.host === '127.0.0.1' || config.redis.host === 'localhost')
+const isLocalRedis = config.redis.host === '127.0.0.1' || config.redis.host === 'localhost';
+const redis = isLocalRedis
   ? new Redis({ host: config.redis.host, port: config.redis.port })
-  : new Redis.Cluster([{ host: config.redis.host, port: config.redis.port }]);
+  : new Redis.Cluster(
+      [{ host: config.redis.host, port: config.redis.port }],
+      { redisOptions: { tls: {} } }
+    );
 
 redis.on('connect', () => console.log('⚡ Worker: Redis 캐시 서버 연결 완료!'));
 

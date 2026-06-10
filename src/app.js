@@ -38,9 +38,13 @@ app.get('/health', (req, res) => {
 });
 
 // Redis 캐시 서버 연결 (로컬 개발 환경에서는 단일 노드, AWS EKS 배포 환경에서는 Cluster 모드로 가동)
-const redis = (config.redis.host === '127.0.0.1' || config.redis.host === 'localhost')
+const isLocalRedis = config.redis.host === '127.0.0.1' || config.redis.host === 'localhost';
+const redis = isLocalRedis
   ? new Redis({ host: config.redis.host, port: config.redis.port })
-  : new Redis.Cluster([{ host: config.redis.host, port: config.redis.port }]);
+  : new Redis.Cluster(
+    [{ host: config.redis.host, port: config.redis.port }],
+    { redisOptions: { tls: {} } }
+  );
 
 redis.on('connect', () => console.log('⚡ Redis 캐시 서버 연결 완료!'));
 
@@ -54,7 +58,7 @@ if (isMockSqs) {
   const fs = require('fs');
   const path = require('path');
   const queuePath = path.join(__dirname, '../mock_sqs_queue.json');
-  
+
   if (!fs.existsSync(queuePath)) {
     fs.writeFileSync(queuePath, JSON.stringify([]));
   }
@@ -124,7 +128,7 @@ app.post('/api/reserve', async (req, res) => {
   // 예매하려는 세그먼트 Redis 키 추출
   const segmentKeys = [];
   for (let i = startIndex; i < endIndex; i++) {
-    segmentKeys.push(`{train:${trainId}}:${STATIONS[i]}-${STATIONS[i+1]}`);
+    segmentKeys.push(`{train:${trainId}}:${STATIONS[i]}-${STATIONS[i + 1]}`);
   }
 
   // 1. [Lazy Cache Warming] 관련 세그먼트 키 중 Redis에 없는 키가 있다면 DB에서 조회하여 캐싱
@@ -180,26 +184,26 @@ app.post('/api/reserve', async (req, res) => {
 
     if (result === -1) return res.status(400).json({ message: '매진 (일부 구간 좌석 매진)' });
     if (result === -2) return res.status(400).json({ message: '이미 예약 진행 중' });
-    
+
     isReservedInRedis = true; // Redis 예약 성공 표시
 
     // 4. SQS 메시지 전송 (구간 정보 및 reservationId 포함)
-    const messageBody = JSON.stringify({ 
+    const messageBody = JSON.stringify({
       reservationId,
-      userId, 
-      trainId, 
-      startStation, 
-      endStation, 
-      status: 'PENDING', 
-      timestamp: Date.now() 
+      userId,
+      trainId,
+      startStation,
+      endStation,
+      status: 'PENDING',
+      timestamp: Date.now()
     });
-    
+
     const command = new SendMessageCommand({
       QueueUrl: SQS_QUEUE_URL,
       MessageBody: messageBody,
     });
     await sqsClient.send(command);
-    
+
     res.json({ success: true, message: '예약 요청이 대기열에 등록되었습니다.', reservationId });
   } catch (err) {
     console.error('❌ 예약 요청 처리 중 에러 발생:', err);
@@ -236,13 +240,13 @@ app.get('/api/trains/:trainId', async (req, res) => {
   // 조회 구간 세그먼트 키 리스트 추출
   const segmentKeys = [];
   for (let i = startIndex; i < endIndex; i++) {
-    segmentKeys.push(`{train:${trainId}}:${STATIONS[i]}-${STATIONS[i+1]}`);
+    segmentKeys.push(`{train:${trainId}}:${STATIONS[i]}-${STATIONS[i + 1]}`);
   }
 
   try {
     // 1. Redis에서 모든 관련 구간의 잔여석 조회
     const seatValues = await Promise.all(segmentKeys.map(key => redis.get(key)));
-    
+
     // 만약 한 구간이라도 캐시가 미스나면 DB에서 로드
     const isCacheMiss = seatValues.some(val => val === null);
 
@@ -254,7 +258,7 @@ app.get('/api/trains/:trainId', async (req, res) => {
       // 2. DB에서 필요한 모든 세그먼트 조회
       const querySegments = [];
       for (let i = startIndex; i < endIndex; i++) {
-        querySegments.push([STATIONS[i], STATIONS[i+1]]);
+        querySegments.push([STATIONS[i], STATIONS[i + 1]]);
       }
 
       const placeholders = querySegments.map(() => '(start_station = ? AND end_station = ?)').join(' OR ');
@@ -289,11 +293,11 @@ app.get('/api/trains/:trainId', async (req, res) => {
       finalAvailableSeats = Math.min(...seatValues.map(val => parseInt(val, 10)));
     }
 
-    res.json({ 
-      trainId, 
-      startStation, 
-      endStation, 
-      availableSeats: finalAvailableSeats 
+    res.json({
+      trainId,
+      startStation,
+      endStation,
+      availableSeats: finalAvailableSeats
     });
   } catch (err) {
     console.error(err);
@@ -326,9 +330,9 @@ app.post('/api/reserve/confirm', async (req, res) => {
     try {
       await connection.beginTransaction();
 
-      // 고유 예약 식별자 UUID를 기준으로 정확히 조회
+      // 고유 예약 식별자 UUID를 기준으로 상태까지 상세 조회
       const [reservations] = await connection.execute(
-        'SELECT id FROM reservations WHERE reservation_uuid = ? AND status = "PENDING" LIMIT 1',
+        'SELECT id, status FROM reservations WHERE reservation_uuid = ? LIMIT 1',
         [reservationId]
       );
 
@@ -336,7 +340,16 @@ app.post('/api/reserve/confirm', async (req, res) => {
         throw new Error('예약 요청이 아직 처리 중입니다. 잠시 후 다시 결제를 시도해 주세요.');
       }
 
-      const dbReservationId = reservations[0].id;
+      const dbReservation = reservations[0];
+      const dbReservationId = dbReservation.id;
+      const dbStatus = dbReservation.status;
+
+      if (dbStatus === 'CANCELLED') {
+        throw new Error('예약 대기 시간이 초과되어 예약이 만료 취소되었습니다. 다시 예매해 주세요.');
+      }
+      if (dbStatus === 'SUCCESS') {
+        throw new Error('이미 확정된 예약입니다.');
+      }
 
       await connection.execute(
         'UPDATE reservations SET status = "SUCCESS" WHERE id = ?',
