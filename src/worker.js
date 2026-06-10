@@ -127,25 +127,25 @@ async function pollMessages() {
               await connection.rollback();
               console.error(`❌ DB 트랜잭션 오류로 인해 롤백 처리합니다. (User: ${body.userId}, Train: ${body.trainId}):`, dbErr.message);
 
-              // Redis 차감 상태 및 임시 예약 키 롤백
-              const userKey = `{train:${body.trainId}}:user:${body.userId}:${body.reservationId}`;
-              const rollbackPipeline = redis.pipeline();
-              for (let i = startIndex; i < endIndex; i++) {
-                rollbackPipeline.incr(`{train:${body.trainId}}:${STATIONS[i]}-${STATIONS[i + 1]}`);
-              }
-              rollbackPipeline.del(userKey);
-              await rollbackPipeline.exec();
-              console.log(`🔄 [Rollback] DB 오류로 인해 Redis 상태 복구를 성공적으로 처리했습니다.`);
-
               // 외래키 제약조건 위반(1452) 또는 중복 키 에러(1062) 등 재시도가 무의미한 영구적 에러인 경우 SQS에서 메시지 파기 (Poison Pill 방지)
               if (dbErr.errno === 1452 || dbErr.errno === 1062 || dbErr.code === 'ER_NO_REFERENCED_ROW_2' || dbErr.code === 'ER_DUP_ENTRY') {
+                // Redis 차감 상태 및 임시 예약 키 롤백 (영구적 실패이므로 상태 복구)
+                const userKey = `{train:${body.trainId}}:user:${body.userId}:${body.reservationId}`;
+                const rollbackPipeline = redis.pipeline();
+                for (let i = startIndex; i < endIndex; i++) {
+                  rollbackPipeline.incr(`{train:${body.trainId}}:${STATIONS[i]}-${STATIONS[i + 1]}`);
+                }
+                rollbackPipeline.del(userKey);
+                await rollbackPipeline.exec();
+                console.log(`🔄 [Rollback] 영구적인 DB 오류로 인해 Redis 상태 복구를 성공적으로 처리했습니다.`);
+
                 console.warn(`⚠️ 영구적인 DB 오류가 감지되어 SQS 메시지를 큐에서 영구 삭제합니다. (MessageId: ${msg.MessageId})`);
                 await sqsClient.send(new DeleteMessageCommand({
                   QueueUrl: SQS_QUEUE_URL,
                   ReceiptHandle: msg.ReceiptHandle
                 }));
               } else {
-                // 커넥션 풀 부족, 타임아웃 등 일시적인 장애는 throw하여 재처리될 수 있도록 함
+                // 커넥션 풀 부족, 타임아웃 등 일시적인 장애는 throw하여 SQS 메시지가 재시도(Retry)될 수 있도록 함 (이때 Redis 상태는 유지)
                 throw dbErr;
               }
             } finally {
