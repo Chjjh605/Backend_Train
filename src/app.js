@@ -8,6 +8,7 @@ const config = require('./config'); // 중앙 설정 파일 로드
 // MySQL DB 커넥션 풀 생성 (Azure SSL 접속 대응)
 const pool = mysql.createPool({
   host: config.db.host,
+  port: config.db.port,
   user: config.db.user,
   password: config.db.password,
   database: config.db.name,
