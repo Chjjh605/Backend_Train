@@ -5,6 +5,7 @@
   "main": "index.js",
   "scripts": {
     "start": "node src/app.js",
+    "app": "node src/app.js",
     "worker": "node src/worker.js"
   },
   "keywords": [],
