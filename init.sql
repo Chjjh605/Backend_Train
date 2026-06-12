@@ -48,8 +48,9 @@ CREATE TABLE reservations (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 ## 테스트용 데이터
-INSERT IGNORE INTO users (id, cognito_sub, email, name) VALUES (1, 'local-test-sub', 'test@example.com', '홍길동');
+INSERT IGNORE INTO users (id, cognito_sub, email, name) VALUES (1, 'user123', 'test@example.com', '홍길동');
 
+-- 1번 열차 (KTX 001)
 INSERT IGNORE INTO trains (id, train_number, segment, departure_time, total_seats, available_seats) 
 VALUES (1, 'KTX-101', '서울-부산', '2026-06-10 10:00:00', 100, 100);
 
@@ -57,3 +58,12 @@ INSERT IGNORE INTO train_segments (train_id, start_station, end_station, total_s
 (1, 'SEOUL', 'DAEJEON', 100, 100),
 (1, 'DAEJEON', 'DAEGU', 100, 100),
 (1, 'DAEGU', 'BUSAN', 100, 100);
+
+-- 2번 열차 (KTX 161)
+INSERT IGNORE INTO trains (id, train_number, segment, departure_time, total_seats, available_seats) 
+VALUES (2, 'KTX-161', '서울-부산', '2026-06-10 11:00:00', 100, 100);
+
+INSERT IGNORE INTO train_segments (train_id, start_station, end_station, total_seats, available_seats) VALUES
+(2, 'SEOUL', 'DAEJEON', 100, 100),
+(2, 'DAEJEON', 'DAEGU', 100, 100),
+(2, 'DAEGU', 'BUSAN', 100, 100);

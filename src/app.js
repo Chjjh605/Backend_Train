@@ -119,6 +119,19 @@ app.post('/api/reserve', async (req, res) => {
     return res.status(400).json({ message: '필수 요청 파라미터가 누락되었습니다.' });
   }
 
+  // Cognito sub (문자열)를 데이터베이스 사용자 기본키 id (숫자형)로 변환
+  let dbUserId;
+  try {
+    const [userRows] = await pool.execute('SELECT id FROM users WHERE cognito_sub = ?', [userId]);
+    if (userRows.length === 0) {
+      return res.status(400).json({ message: '등록되지 않은 Cognito 유저입니다.' });
+    }
+    dbUserId = userRows[0].id;
+  } catch (dbErr) {
+    console.error('❌ [Reserve] 유저 DB 조회 중 오류:', dbErr.message);
+    return res.status(500).json({ message: '사용자 정보 조회 중 서버 오류가 발생했습니다.' });
+  }
+
   const startIndex = STATIONS.indexOf(startStation);
   const endIndex = STATIONS.indexOf(endStation);
 
@@ -176,7 +189,7 @@ app.post('/api/reserve', async (req, res) => {
   // 2. 고유 예약 식별자 UUID 생성
   const crypto = require('crypto');
   const reservationId = crypto.randomUUID();
-  const userKey = `{train:${trainId}}:user:${userId}:${reservationId}`;
+  const userKey = `{train:${trainId}}:user:${dbUserId}:${reservationId}`;
   let isReservedInRedis = false;
 
   try {
@@ -191,7 +204,7 @@ app.post('/api/reserve', async (req, res) => {
     // 4. SQS 메시지 전송 (구간 정보 및 reservationId 포함)
     const messageBody = JSON.stringify({
       reservationId,
-      userId,
+      userId: dbUserId, // SQS에는 DB의 숫자형 유저 ID를 발송
       trainId,
       startStation,
       endStation,
@@ -211,7 +224,7 @@ app.post('/api/reserve', async (req, res) => {
 
     // 5. [롤백 로직] Redis 예약은 성공했으나 SQS 실패 시 모든 세그먼트 좌석 원상 복구
     if (isReservedInRedis) {
-      console.log(`🔄 [Rollback] SQS 전송 실패로 인해 Redis 상태를 롤백합니다. (User: ${userId}, Train: ${trainId}, Res: ${reservationId})`);
+      console.log(`🔄 [Rollback] SQS 전송 실패로 인해 Redis 상태를 롤백합니다. (User: ${dbUserId}, Train: ${trainId}, Res: ${reservationId})`);
       const rollbackPipeline = redis.pipeline();
       for (const key of segmentKeys) {
         rollbackPipeline.incr(key);
@@ -314,7 +327,20 @@ app.post('/api/reserve/confirm', async (req, res) => {
     return res.status(400).json({ message: 'userId, trainId, reservationId가 필요합니다.' });
   }
 
-  const userKey = `{train:${trainId}}:user:${userId}:${reservationId}`;
+  // Cognito sub (문자열)를 데이터베이스 사용자 기본키 id (숫자형)로 변환
+  let dbUserId;
+  try {
+    const [userRows] = await pool.execute('SELECT id FROM users WHERE cognito_sub = ?', [userId]);
+    if (userRows.length === 0) {
+      return res.status(400).json({ message: '등록되지 않은 Cognito 유저입니다.' });
+    }
+    dbUserId = userRows[0].id;
+  } catch (dbErr) {
+    console.error('❌ [Confirm] 유저 DB 조회 중 오류:', dbErr.message);
+    return res.status(500).json({ message: '사용자 정보 조회 중 서버 오류가 발생했습니다.' });
+  }
+
+  const userKey = `{train:${trainId}}:user:${dbUserId}:${reservationId}`;
 
   try {
     // 1. Redis에서 임시 예약 상태 확인
