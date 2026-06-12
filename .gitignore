@@ -1,2 +1,4 @@
 node_modules/
 redis-bin/
+.env
+mock_sqs_queue.json
