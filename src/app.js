@@ -44,7 +44,10 @@ const redis = isLocalRedis
   ? new Redis({ host: config.redis.host, port: config.redis.port })
   : new Redis.Cluster(
     [{ host: config.redis.host, port: config.redis.port }],
-    { redisOptions: { tls: {} } }
+    { 
+      redisOptions: { tls: { rejectUnauthorized: false } },
+      dnsLookup: (address, callback) => callback(null, address)
+    }
   );
 
 redis.on('connect', () => console.log('⚡ Redis 캐시 서버 연결 완료!'));
