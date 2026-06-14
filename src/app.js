@@ -48,6 +48,9 @@ const redis = isLocalRedis
   );
 
 redis.on('connect', () => console.log('⚡ Redis 캐시 서버 연결 완료!'));
+redis.on('error', (err) => {
+  console.error('⚠️ Redis 캐시 서버 연결 오류 발생 (캐시 없이 계속 진행):', err.message);
+});
 
 // AWS SQS 클라이언트 세팅 (로컬 테스트용 Mock SQS 지원)
 const SQS_QUEUE_URL = config.aws.sqsQueueUrl;
@@ -113,6 +116,10 @@ const MULTI_RESERVE_LUA = `
 
 // 예매 API (구간별 수량 차감 연동 방식)
 app.post('/api/reserve', async (req, res) => {
+  if (process.env.READ_ONLY_MODE === 'true') {
+    return res.status(403).json({ message: '현재 시스템은 재해 복구(DR) 대기 모드입니다. 조회 서비스만 이용 가능합니다.' });
+  }
+
   const { userId, trainId, startStation, endStation } = req.body;
 
   if (!userId || !trainId || !startStation || !endStation) {
@@ -258,16 +265,24 @@ app.get('/api/trains/:trainId', async (req, res) => {
   }
 
   try {
-    // 1. Redis에서 모든 관련 구간의 잔여석 조회
-    const seatValues = await Promise.all(segmentKeys.map(key => redis.get(key)));
+    let seatValues;
+    let isCacheMiss = true;
 
-    // 만약 한 구간이라도 캐시가 미스나면 DB에서 로드
-    const isCacheMiss = seatValues.some(val => val === null);
+    try {
+      // 1. Redis에서 모든 관련 구간의 잔여석 조회
+      seatValues = await Promise.all(segmentKeys.map(key => redis.get(key)));
+      isCacheMiss = seatValues.some(val => val === null);
+    } catch (redisErr) {
+      console.warn('⚠️ Redis 연결 실패로 인해 DB에서 직접 조회합니다:', redisErr.message);
+      // Redis 조회 실패 시 캐시 미스로 처리하여 DB 쿼리로 폴백
+      isCacheMiss = true;
+      seatValues = null;
+    }
 
     let finalAvailableSeats;
 
     if (isCacheMiss) {
-      console.log(`ℹ️ Cache Miss - DB에서 열차 ${trainId} (${startStation} -> ${endStation}) 구간 데이터를 로드합니다.`);
+      console.log(`ℹ️ Cache Miss 또는 Redis 미연결 - DB에서 열차 ${trainId} (${startStation} -> ${endStation}) 구간 데이터를 로드합니다.`);
 
       // 2. DB에서 필요한 모든 세그먼트 조회
       const querySegments = [];
@@ -288,18 +303,30 @@ app.get('/api/trains/:trainId', async (req, res) => {
         return res.status(404).json({ message: "해당 노선 구간 정보를 찾을 수 없습니다." });
       }
 
-      // 각 구간 데이터를 Redis 캐시에 쓰고 최솟값 계산
-      const writePipeline = redis.pipeline();
       let minSeats = Infinity;
 
-      rows.forEach(row => {
-        const key = `{train:${trainId}}:${row.start_station}-${row.end_station}`;
-        writePipeline.set(key, row.available_seats, 'EX', 3600);
-        if (row.available_seats < minSeats) {
-          minSeats = row.available_seats;
-        }
-      });
-      await writePipeline.exec();
+      // Redis가 연결되어 있을 때만 캐시 쓰기 파이프라인 수행
+      try {
+        const writePipeline = redis.pipeline();
+        rows.forEach(row => {
+          const key = `{train:${trainId}}:${row.start_station}-${row.end_station}`;
+          writePipeline.set(key, row.available_seats, 'EX', 3600);
+          if (row.available_seats < minSeats) {
+            minSeats = row.available_seats;
+          }
+        });
+        await writePipeline.exec();
+      } catch (writeErr) {
+        console.warn('⚠️ Redis 캐시 쓰기 실패 (DB 조회 결과로 계속 진행):', writeErr.message);
+        // 캐시 실패 시 메모리상에서 직접 최솟값 계산
+        minSeats = Infinity;
+        rows.forEach(row => {
+          if (row.available_seats < minSeats) {
+            minSeats = row.available_seats;
+          }
+        });
+      }
+      
       finalAvailableSeats = minSeats;
 
     } else {
@@ -321,6 +348,10 @@ app.get('/api/trains/:trainId', async (req, res) => {
 
 // 예약 확정 (결제 완료) API
 app.post('/api/reserve/confirm', async (req, res) => {
+  if (process.env.READ_ONLY_MODE === 'true') {
+    return res.status(403).json({ message: '현재 시스템은 재해 복구(DR) 대기 모드입니다. 결제 및 예매 확정이 불가능합니다.' });
+  }
+
   const { userId, trainId, reservationId } = req.body;
 
   if (!userId || !trainId || !reservationId) {

@@ -13,6 +13,9 @@ const redis = isLocalRedis
     );
 
 redis.on('connect', () => console.log('⚡ Worker: Redis 캐시 서버 연결 완료!'));
+redis.on('error', (err) => {
+  console.error('⚠️ Worker: Redis 캐시 서버 연결 오류 발생:', err.message);
+});
 
 // AWS SQS 및 MySQL DB 세팅 (로컬 테스트용 Mock SQS 지원)
 const SQS_QUEUE_URL = config.aws.sqsQueueUrl;
