@@ -7,7 +7,8 @@ module.exports = {
   allowedOrigins: process.env.ALLOWED_ORIGINS, // AWS 배포 환경에서는 환경변수 필수 주입
   aws: {
     region: process.env.AWS_REGION || 'ap-northeast-2',
-    sqsQueueUrl: process.env.SQS_QUEUE_URL
+    sqsQueueUrl: process.env.SQS_QUEUE_URL,
+    mailQueueUrl: process.env.MAIL_QUEUE_URL
   },
   db: {
     host: process.env.DB_HOST, // AWS RDS 연결을 위해 필수 주입

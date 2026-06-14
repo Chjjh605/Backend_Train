@@ -3,58 +3,20 @@ const mysql = require('mysql2/promise');
 const Redis = require('ioredis');
 const config = require('./config'); // 중앙 설정 파일 로드
 
-// Redis 캐시 서버 연결 (로컬 개발 환경에서는 단일 노드, AWS EKS 배포 환경에서는 Cluster 모드로 가동)
-const isLocalRedis = config.redis.host === '127.0.0.1' || config.redis.host === 'localhost';
-const redis = isLocalRedis
-  ? new Redis({ host: config.redis.host, port: config.redis.port })
-  : new Redis.Cluster(
-      [{ host: config.redis.host, port: config.redis.port }],
-      { redisOptions: { tls: {} } }
-    );
+// Redis 캐시 서버 연결 (AWS EKS 배포 환경 - ElastiCache Redis Cluster TLS 연결)
+const redis = new Redis.Cluster(
+  [{ host: config.redis.host, port: config.redis.port }],
+  { redisOptions: { tls: {} } }
+);
 
 redis.on('connect', () => console.log('⚡ Worker: Redis 캐시 서버 연결 완료!'));
 redis.on('error', (err) => {
   console.error('⚠️ Worker: Redis 캐시 서버 연결 오류 발생:', err.message);
 });
 
-// AWS SQS 및 MySQL DB 세팅 (로컬 테스트용 Mock SQS 지원)
+// AWS SQS 세팅
 const SQS_QUEUE_URL = config.aws.sqsQueueUrl;
-const isMockSqs = !SQS_QUEUE_URL || SQS_QUEUE_URL.includes('여기에') || SQS_QUEUE_URL.startsWith('mock://');
-
-let sqsClient;
-if (isMockSqs) {
-  console.log('☁️ SQS: 로컬 테스트용 Mock SQS 클라이언트를 활성화합니다.');
-  const fs = require('fs');
-  const path = require('path');
-  const queuePath = path.join(__dirname, '../mock_sqs_queue.json');
-
-  if (!fs.existsSync(queuePath)) {
-    fs.writeFileSync(queuePath, JSON.stringify([]));
-  }
-
-  sqsClient = {
-    send: async (command) => {
-      const input = command.input || {};
-      const messages = JSON.parse(fs.readFileSync(queuePath, 'utf8'));
-
-      if (input.MaxNumberOfMessages !== undefined) {
-        if (messages.length === 0) {
-          return { Messages: [] };
-        }
-        const max = input.MaxNumberOfMessages || 10;
-        const popped = messages.splice(0, max);
-        fs.writeFileSync(queuePath, JSON.stringify(messages, null, 2));
-        return { Messages: popped };
-      }
-      else if (input.ReceiptHandle !== undefined) {
-        return {};
-      }
-      return {};
-    }
-  };
-} else {
-  sqsClient = new SQSClient({ region: config.aws.region });
-}
+const sqsClient = new SQSClient({ region: config.aws.region });
 
 const pool = mysql.createPool({
   host: config.db.host,

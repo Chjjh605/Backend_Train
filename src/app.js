@@ -38,75 +38,45 @@ app.get('/health', (req, res) => {
   res.status(200).send('OK');
 });
 
-// Redis 캐시 서버 연결 (로컬 개발 환경에서는 단일 노드, AWS EKS 배포 환경에서는 Cluster 모드로 가동)
-const isLocalRedis = config.redis.host === '127.0.0.1' || config.redis.host === 'localhost';
-const redis = isLocalRedis
-  ? new Redis({ host: config.redis.host, port: config.redis.port })
-  : new Redis.Cluster(
-    [{ host: config.redis.host, port: config.redis.port }],
-    { redisOptions: { tls: {} } }
-  );
+// Redis 캐시 서버 연결 (AWS EKS 배포 환경 - ElastiCache Redis Cluster TLS 연결)
+const redis = new Redis.Cluster(
+  [{ host: config.redis.host, port: config.redis.port }],
+  { redisOptions: { tls: {} } }
+);
 
 redis.on('connect', () => console.log('⚡ Redis 캐시 서버 연결 완료!'));
 redis.on('error', (err) => {
   console.error('⚠️ Redis 캐시 서버 연결 오류 발생 (캐시 없이 계속 진행):', err.message);
 });
 
-// AWS SQS 클라이언트 세팅 (로컬 테스트용 Mock SQS 지원)
+// AWS SQS 클라이언트 세팅
 const SQS_QUEUE_URL = config.aws.sqsQueueUrl;
-const isMockSqs = !SQS_QUEUE_URL || SQS_QUEUE_URL.includes('여기에') || SQS_QUEUE_URL.startsWith('mock://');
-
-let sqsClient;
-if (isMockSqs) {
-  console.log('☁️ SQS: 로컬 테스트용 Mock SQS 클라이언트를 활성화합니다.');
-  const fs = require('fs');
-  const path = require('path');
-  const queuePath = path.join(__dirname, '../mock_sqs_queue.json');
-
-  if (!fs.existsSync(queuePath)) {
-    fs.writeFileSync(queuePath, JSON.stringify([]));
-  }
-
-  sqsClient = {
-    send: async (command) => {
-      await new Promise(resolve => setTimeout(resolve, 50));
-      const messageBody = command.input.MessageBody;
-      const messages = JSON.parse(fs.readFileSync(queuePath, 'utf8'));
-      messages.push({
-        MessageId: require('crypto').randomUUID(),
-        Body: messageBody,
-        ReceiptHandle: require('crypto').randomUUID()
-      });
-      fs.writeFileSync(queuePath, JSON.stringify(messages, null, 2));
-      return { MessageId: 'mock-message-id' };
-    }
-  };
-} else {
-  sqsClient = new SQSClient({
-    region: config.aws.region
-  });
-}
+const sqsClient = new SQSClient({
+  region: config.aws.region
+});
 
 // 정해진 역 순서 정의 (서울 -> 대전 -> 대구 -> 부산)
 const STATIONS = ['SEOUL', 'DAEJEON', 'DAEGU', 'BUSAN'];
 
-// 다중 세그먼트 키 일괄 차감 LUA 스크립트
+// 다중 세그먼트 키 일괄 차감 LUA 스크립트 (Redis Cluster CROSSSLOT 방지를 위해 모든 키를 KEYS 배열에 정의)
 const MULTI_RESERVE_LUA = `
-  local userKey = ARGV[1]
-  local expireTime = tonumber(ARGV[2])
+  local userKey = KEYS[1]
+  local expireTime = tonumber(ARGV[1])
   
   if redis.call('EXISTS', userKey) == 1 then
     return -2
   end
   
-  for i, key in ipairs(KEYS) do
+  for i = 2, #KEYS do
+    local key = KEYS[i]
     local seats = redis.call('GET', key)
     if not seats or tonumber(seats) <= 0 then
       return -1
     end
   end
   
-  for i, key in ipairs(KEYS) do
+  for i = 2, #KEYS do
+    local key = KEYS[i]
     redis.call('DECR', key)
   end
   
@@ -200,8 +170,8 @@ app.post('/api/reserve', async (req, res) => {
   let isReservedInRedis = false;
 
   try {
-    // 3. Redis LUA 스크립트로 탑승 구간 전체 원자적 차감 실행
-    const result = await redis.eval(MULTI_RESERVE_LUA, segmentKeys.length, ...segmentKeys, userKey, 300);
+    // 3. Redis LUA 스크립트로 탑승 구간 전체 원자적 차감 실행 (userKey와 segmentKeys를 모두 KEYS 배열로 전달)
+    const result = await redis.eval(MULTI_RESERVE_LUA, segmentKeys.length + 1, userKey, ...segmentKeys, 300);
 
     if (result === -1) return res.status(400).json({ message: '매진 (일부 구간 좌석 매진)' });
     if (result === -2) return res.status(400).json({ message: '이미 예약 진행 중' });
@@ -360,12 +330,16 @@ app.post('/api/reserve/confirm', async (req, res) => {
 
   // Cognito sub (문자열)를 데이터베이스 사용자 기본키 id (숫자형)로 변환
   let dbUserId;
+  let userEmail;
+  let userName;
   try {
-    const [userRows] = await pool.execute('SELECT id FROM users WHERE cognito_sub = ?', [userId]);
+    const [userRows] = await pool.execute('SELECT id, email, name FROM users WHERE cognito_sub = ?', [userId]);
     if (userRows.length === 0) {
       return res.status(400).json({ message: '등록되지 않은 Cognito 유저입니다.' });
     }
     dbUserId = userRows[0].id;
+    userEmail = userRows[0].email;
+    userName = userRows[0].name;
   } catch (dbErr) {
     console.error('❌ [Confirm] 유저 DB 조회 중 오류:', dbErr.message);
     return res.status(500).json({ message: '사용자 정보 조회 중 서버 오류가 발생했습니다.' });
@@ -390,7 +364,7 @@ app.post('/api/reserve/confirm', async (req, res) => {
 
       // 고유 예약 식별자 UUID를 기준으로 상태까지 상세 조회
       const [reservations] = await connection.execute(
-        'SELECT id, status FROM reservations WHERE reservation_uuid = ? LIMIT 1',
+        'SELECT id, status, start_station, end_station FROM reservations WHERE reservation_uuid = ? LIMIT 1',
         [reservationId]
       );
 
@@ -401,6 +375,8 @@ app.post('/api/reserve/confirm', async (req, res) => {
       const dbReservation = reservations[0];
       const dbReservationId = dbReservation.id;
       const dbStatus = dbReservation.status;
+      const startStation = dbReservation.start_station;
+      const endStation = dbReservation.end_station;
 
       if (dbStatus === 'CANCELLED') {
         throw new Error('예약 대기 시간이 초과되어 예약이 만료 취소되었습니다. 다시 예매해 주세요.');
@@ -418,6 +394,25 @@ app.post('/api/reserve/confirm', async (req, res) => {
 
       // 3. Redis 유저 예약 상태 업데이트 (SUCCESS로 변경하고 1일 유지)
       await redis.set(userKey, 'SUCCESS', 'EX', 86400);
+
+      // 4. 예매 완료 이메일 발송용 SQS 메시지 전송
+      if (config.aws.mailQueueUrl) {
+        try {
+          const mailPayload = JSON.stringify({
+            to: userEmail,
+            subject: `[열차 예매 완료] ${userName}님, 승차권 결제가 완료되었습니다.`,
+            message: `안녕하세요 ${userName} 고객님,\n\n승차권 결제 및 예매가 완료되었습니다.\n\n[예매 상세 정보]\n- 예약 번호: ${reservationId}\n- 열차 정보: ${trainId}번 열차\n- 구간: ${startStation} -> ${endStation}\n\n즐거운 여행 되시길 바랍니다!`
+          });
+
+          await sqsClient.send(new SendMessageCommand({
+            QueueUrl: config.aws.mailQueueUrl,
+            MessageBody: mailPayload
+          }));
+          console.log(`✅ SQS 알림 큐로 예매 완료 메일 요청 전송 완료! (User: ${userEmail})`);
+        } catch (sqsErr) {
+          console.error('⚠️ 알림 SQS 전송 중 실패 (결제 완료 상태이므로 에러는 무시하고 진행):', sqsErr.message);
+        }
+      }
 
       res.json({ success: true, message: '예약이 성공적으로 확정되었습니다.', reservationId });
 
