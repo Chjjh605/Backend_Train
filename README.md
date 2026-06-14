@@ -1,25 +1,55 @@
-## 🛠 Tech Stack
-- **Runtime**: Node.js (Express)
-- **Database**: Aurora MySQL (Multi-AZ CQRS) / Azure Database for MySQL (Standby Target)
-- **Cache & Concurrency**: Redis (ElastiCache / Cluster mode)
-- **Queueing & Event-driven**: AWS SQS (Simple Queue Service)
-- **Container**: Docker
+## ☁️ AWS EKS 배포 및 연동 가이드
 
----
+테라폼(`Train_repo`)으로 배포한 실제 AWS 클라우드 환경에 백엔드 서비스를 연계하고 기동하는 방법입니다.
 
-## ✨ 핵심 아키텍처 및 구현 기여
+### ⚙️ 배포 및 연동 절차
 
-### 1. Redis Lua Script를 활용한 실시간 좌석 동시성 제어
-- 다수의 사용자가 동시에 동일한 기차 좌석을 예매할 때 발생하는 **데이터 레이스(Race Condition) 및 초과 예약(Over-booking) 방지**.
-- 좌석 조회가 빈번히 발생하는 구간 세그먼트(서울-대전-대구-부산)의 잔여 재고 관리를 단일 스레드로 작동하는 Redis 상에서 **원자적(Atomic) 연산(Lua Script)**으로 처리하여 정합성 및 속도 확보.
+#### [1단계] 인프라 엔드포인트 확보
+테라폼 배포 완료 후 터미널에 출력되는 핵심 엔드포인트들을 확인합니다.
+- `aurora_writer_endpoint` (RDS DB 호스트)
+- `redis_primary_endpoint` (ElastiCache 호스트)
+- `sqs_queue_url` (실제 AWS SQS 대기열 주소)
 
-### 2. AWS SQS 기반 이벤트 드리븐 비동기 처리
-- 트래픽 폭주 시점(예: 예매 오픈 시간)의 서버 CPU 및 DB 쓰기 부하 격리.
-- 임시 예약을 완료한 요청 건을 **AWS SQS 큐로 즉시 적재(Buffering)**한 뒤, 백그라운드 워커(`worker.js`)가 순차적으로 처리하여 DB 커넥션 병목 해소 및 유실 차단.
+#### [2단계] Docker 이미지 빌드 및 AWS ECR 푸시
+수정된 소스코드를 가벼운 Alpine Node.js 이미지 기반으로 컨테이너화하여 AWS ECR 저장소로 푸시합니다.
+```bash
+# 1. AWS CLI를 통한 ECR 로그인 인증 획득 (AWS 계정 프로필 지정)
+aws ecr get-login-password --region ap-northeast-2 --profile team | docker login --username AWS --password-stdin 009152047332.dkr.ecr.ap-northeast-2.amazonaws.com
 
-### 3. Aurora MySQL Multi-AZ CQRS 패턴 및 실시간 복제
-- 서비스의 안정적 쓰기(Write) 작업 보장과 빠른 조회(Read) 제공을 위해 **Writer와 Reader DB 엔드포인트를 완전히 분리 설계**.
-- AWS Aurora Primary DB의 트랜잭션 로그(Binlog)를 **AWS DMS(Database Migration Service)**를 활용해 재해 복구용 Azure Database for MySQL로 실시간 동기화(CDC).
+# 2. 로컬 Docker 이미지 빌드 (Backend 폴더 루트에서 실행)
+docker build -t train-backend .
+
+# 3. ECR 저장소 경로로 업로드용 이미지 태그 지정
+docker tag train-backend:latest 009152047332.dkr.ecr.ap-northeast-2.amazonaws.com/train-backend:latest
+
+# 4. AWS ECR 레포지토리로 컨테이너 이미지 푸시
+docker push 009152047332.dkr.ecr.ap-northeast-2.amazonaws.com/train-backend:latest
+```
+
+#### [3단계] AWS EKS 연결 설정
+로컬 터미널의 쿠버네티스 연결 컨텍스트를 업데이트합니다.
+```bash
+aws eks update-kubeconfig --region ap-northeast-2 --name team-train-dev-eks --profile team
+```
+
+#### [4단계] 쿠버네티스 환경변수 및 보안 설정 (`env-config.yaml` & `train-secret`)
+1. `Train_repo/modules/infra/k8s-manifests/env-config.yaml` 파일의 `data` 영역에 테라폼 아웃풋으로 확인한 `SQS_QUEUE_URL`, `DB_HOST`, `REDIS_HOST` 등의 주소들을 입력합니다.
+2. 데이터베이스 접속 인증용 Secret을 생성합니다. (만약 ESO가 설치되어 있지 않다면 아래 명령어를 통해 수동으로 생성해 줍니다.)
+   ```bash
+   kubectl create secret generic train-secret --from-literal=DB_PASSWORD="Password123!" --from-literal=DB_USER="admin" --dry-run=client -o yaml | kubectl apply -f -
+   ```
+> 💡 EKS용 ServiceAccount(`booking-sa`)는 테라폼 배포 단계(`eks_network.tf`)에서 자동으로 생성되므로 별도로 생성할 필요가 없습니다.
+
+#### [5단계] 백엔드 및 워커 컨테이너 배포
+1. `Train_repo/modules/infra/k8s-manifests` 폴더로 이동한 후, 쿠버네티스 매니페스트 파일들을 클러스터에 일괄 배포합니다.
+   ```bash
+   kubectl apply -f .
+   ```
+2. 이미 배포된 상태에서 소스코드가 수정되어 새 이미지로 롤링 업데이트가 필요한 경우, 아래 명령어를 실행하여 파드를 재시작합니다.
+   ```bash
+   kubectl rollout restart deployment train-backend
+   kubectl rollout restart deployment train-worker
+   ```
 
 ---
 
@@ -51,9 +81,9 @@ DB_USER=admin
 DB_PASSWORD=Password123!
 DB_NAME=trail_db
 AWS_REGION=ap-northeast-2
-SQS_QUEUE_URL=mock://local-queue
+SQS_QUEUE_URL=https://sqs.ap-northeast-2.amazonaws.com/009152047332/reservation-queue
+MAIL_QUEUE_URL=https://sqs.ap-northeast-2.amazonaws.com/009152047332/mail-queue
 ```
-> 💡 `SQS_QUEUE_URL` 값을 입력하지 않거나 `mock://`로 지정하면 로컬 개발 편의를 위해 `mock_sqs_queue.json` 파일을 가상 대기열 큐 파일로 활용하는 **Mock SQS 모드**가 활성화됩니다.
 
 ### 4) 어플리케이션 가동
 
@@ -74,60 +104,6 @@ npm run worker
 ```bash
 docker-compose down -v
 ```
-
----
-
-## ☁️ AWS EKS 배포 및 연동 가이드
-
-테라폼(`Train_repo`)으로 배포한 실제 AWS 클라우드 환경에 백엔드 서비스를 연계하고 기동하는 방법입니다.
-
-### ⚙️ 배포 및 연동 절차
-
-#### [1단계] 인프라 엔드포인트 확보
-테라폼 배포 완료 후 터미널에 출력되는 핵심 엔드포인트들을 확인합니다.
-- `aurora_writer_endpoint` (RDS DB 호스트)
-- `redis_primary_endpoint` (ElastiCache 호스트)
-- `sqs_queue_url` (실제 AWS SQS 대기열 주소)
-
-#### [2단계] Docker 이미지 빌드 및 AWS ECR 푸시
-수정된 소스코드를 가벼운 Alpine Node.js 이미지 기반으로 컨테이너화하여 AWS ECR 저장소로 푸시합니다.
-```bash
-# 1. AWS CLI를 통한 ECR 로그인 인증 획득
-aws ecr get-login-password --region ap-northeast-2 | docker login --username AWS --password-stdin 009152047332.dkr.ecr.ap-northeast-2.amazonaws.com
-
-# 2. 로컬 Docker 이미지 빌드 (Backend 폴더 루트에서 실행)
-docker build -t train-backend .
-
-# 3. ECR 저장소 경로로 업로드용 이미지 태그 지정
-docker tag train-backend:latest 009152047332.dkr.ecr.ap-northeast-2.amazonaws.com/train-backend:latest
-
-# 4. AWS ECR 레포지토리로 컨테이너 이미지 푸시
-docker push 009152047332.dkr.ecr.ap-northeast-2.amazonaws.com/train-backend:latest
-```
-
-#### [3단계] AWS EKS 연결 설정
-로컬 터미널의 쿠버네티스 연결 컨텍스트를 업데이트합니다.
-```bash
-aws eks update-kubeconfig --region ap-northeast-2 --name team-train-dev-eks
-```
-
-#### [4단계] SQS 권한용 ServiceAccount 생성 및 적용
-`service-account.yaml`을 생성하고 테라폼이 출력한 `booking_pod_role_arn` 값을 annotation으로 기입한 뒤 클러스터에 배포합니다.
-```bash
-kubectl apply -f service-account.yaml
-```
-
-#### [5단계] 백엔드 및 워커 컨테이너 배포
-1. `backend-deployment.yaml`과 `worker-deployment.yaml` 파일의 환경변수(`env`) 설정 영역에 RDS, Redis, SQS 엔드포인트 주소들을 입력합니다.
-2. EKS 클러스터에 배포 명령을 실행하거나, 이미 구동 중인 파드를 새 이미지로 롤링 업데이트합니다.
-   ```bash
-   # 최초 배포 시 실행
-   kubectl apply -f backend-deployment.yaml
-   kubectl apply -f worker-deployment.yaml
-
-   # 이미지 업데이트 후 EKS의 백엔드 컨테이너 롤링 재시작 시 실행
-   kubectl rollout restart deployment train-backend
-   ```
 
 ---
 
