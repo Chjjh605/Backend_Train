@@ -8,7 +8,9 @@ module.exports = {
   aws: {
     region: process.env.AWS_REGION || 'ap-northeast-2',
     sqsQueueUrl: process.env.SQS_QUEUE_URL,
-    mailQueueUrl: process.env.MAIL_QUEUE_URL
+    mailQueueUrl: process.env.MAIL_QUEUE_URL,
+    userPoolId: process.env.COGNITO_USER_POOL_ID,
+    clientId: process.env.COGNITO_CLIENT_ID
   },
   db: {
     host: process.env.DB_HOST, // AWS RDS 연결을 위해 필수 주입

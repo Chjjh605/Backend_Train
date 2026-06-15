@@ -3,11 +3,14 @@ const mysql = require('mysql2/promise');
 const Redis = require('ioredis');
 const config = require('./config'); // 중앙 설정 파일 로드
 
-// Redis 캐시 서버 연결 (AWS EKS 배포 환경 - ElastiCache Redis Cluster TLS 연결)
-const redis = new Redis.Cluster(
-  [{ host: config.redis.host, port: config.redis.port }],
-  { redisOptions: { tls: {} } }
-);
+// Redis 캐시 서버 연결 (로컬 환경일 때는 Standalone으로, AWS EKS 배포 환경에서는 ElastiCache Redis Cluster TLS 연결)
+const isLocalRedis = config.redis.host === '127.0.0.1' || config.redis.host === 'localhost';
+const redis = isLocalRedis
+  ? new Redis({ host: config.redis.host, port: config.redis.port })
+  : new Redis.Cluster(
+      [{ host: config.redis.host, port: config.redis.port }],
+      { redisOptions: { tls: {} } }
+    );
 
 redis.on('connect', () => console.log('⚡ Worker: Redis 캐시 서버 연결 완료!'));
 redis.on('error', (err) => {
@@ -25,6 +28,7 @@ const pool = mysql.createPool({
   password: config.db.password,
   database: config.db.name,
   connectionLimit: 20, // pod 갯수 * 커넥션리밋 = 총 커넥션
+  charset: 'utf8mb4',
   ssl: {
     rejectUnauthorized: false
   }
@@ -64,21 +68,22 @@ async function pollMessages() {
 
             // 2. MySQL DB 저장 (트랜잭션 적용)
             const connection = await pool.getConnection();
+            const count = parseInt(body.passengerCount, 10) || 1;
 
             try {
               await connection.beginTransaction();
 
-              // A. 예약 내역 삽입 (구간 정보 및 reservation_uuid 포함)
+              // A. 예약 내역 삽입 (구간 정보, passenger_count 및 reservation_uuid 포함)
               await connection.execute(
-                'INSERT INTO reservations (reservation_uuid, user_id, train_id, start_station, end_station, status) VALUES (?, ?, ?, ?, ?, "PENDING")',
-                [body.reservationId, body.userId, body.trainId, body.startStation, body.endStation]
+                'INSERT INTO reservations (reservation_uuid, user_id, train_id, start_station, end_station, status, passenger_count) VALUES (?, ?, ?, ?, ?, "PENDING", ?)',
+                [body.reservationId, body.userId, body.trainId, body.startStation, body.endStation, count]
               );
 
-              // B. trains_segments 테이블 실제 해당 탑승 구간들의 잔여 좌석 각각 차감
+              // B. trains_segments 테이블 실제 해당 탑승 구간들의 잔여 좌석 각각 차감 (count 만큼 차감)
               for (let i = startIndex; i < endIndex; i++) {
                 const [updateResult] = await connection.execute(
-                  'UPDATE train_segments SET available_seats = available_seats - 1 WHERE train_id = ? AND start_station = ? AND end_station = ? AND available_seats > 0',
-                  [body.trainId, STATIONS[i], STATIONS[i + 1]]
+                  'UPDATE train_segments SET available_seats = available_seats - ? WHERE train_id = ? AND start_station = ? AND end_station = ? AND available_seats >= ?',
+                  [count, body.trainId, STATIONS[i], STATIONS[i + 1], count]
                 );
 
                 if (updateResult.affectedRows === 0) {
@@ -88,7 +93,7 @@ async function pollMessages() {
               }
 
               await connection.commit();
-              console.log(`✅ DB 예약 생성 및 구간별 좌석 차감 완료 (User: ${body.userId}, Train: ${body.trainId})`);
+              console.log(`✅ DB 예약 생성 및 구간별 좌석 차감 완료 (User: ${body.userId}, Train: ${body.trainId}, Count: ${count})`);
             } catch (dbErr) {
               await connection.rollback();
               console.error(`❌ DB 트랜잭션 오류로 인해 롤백 처리합니다. (User: ${body.userId}, Train: ${body.trainId}):`, dbErr.message);
@@ -99,7 +104,7 @@ async function pollMessages() {
                 const userKey = `{train:${body.trainId}}:user:${body.userId}:${body.reservationId}`;
                 const rollbackPipeline = redis.pipeline();
                 for (let i = startIndex; i < endIndex; i++) {
-                  rollbackPipeline.incr(`{train:${body.trainId}}:${STATIONS[i]}-${STATIONS[i + 1]}`);
+                  rollbackPipeline.incrby(`{train:${body.trainId}}:${STATIONS[i]}-${STATIONS[i + 1]}`, count);
                 }
                 rollbackPipeline.del(userKey);
                 await rollbackPipeline.exec();
@@ -173,9 +178,9 @@ async function cleanupExpiredReservations() {
   try {
     connection = await pool.getConnection();
 
-    // 1. 5분이 지난 PENDING 예약 내역 조회 (구간 정보 및 reservation_uuid 포함)
+    // 1. 5분이 지난 PENDING 예약 내역 조회 (구간 정보, passenger_count 및 reservation_uuid 포함)
     const [expiredRows] = await connection.execute(
-      `SELECT id, reservation_uuid, user_id, train_id, start_station, end_station FROM reservations 
+      `SELECT id, reservation_uuid, user_id, train_id, start_station, end_station, passenger_count FROM reservations 
        WHERE status = 'PENDING' AND created_at < NOW() - INTERVAL 5 MINUTE`
     );
 
@@ -186,7 +191,8 @@ async function cleanupExpiredReservations() {
     console.log(`🧹 [Scheduler] 만료 대상 예약 발견: ${expiredRows.length}건`);
 
     for (const reservation of expiredRows) {
-      const { id, reservation_uuid, user_id, train_id, start_station, end_station } = reservation;
+      const { id, reservation_uuid, user_id, train_id, start_station, end_station, passenger_count } = reservation;
+      const count = parseInt(passenger_count, 10) || 1;
 
       await connection.beginTransaction();
       try {
@@ -196,23 +202,23 @@ async function cleanupExpiredReservations() {
           [id]
         );
 
-        // B. DB 실제 탑승한 세그먼트 좌석 수 복구 (+1)
+        // B. DB 실제 탑승한 세그먼트 좌석 수 복구 (+count)
         const startIndex = STATIONS.indexOf(start_station);
         const endIndex = STATIONS.indexOf(end_station);
 
         for (let i = startIndex; i < endIndex; i++) {
           await connection.execute(
-            "UPDATE train_segments SET available_seats = available_seats + 1 WHERE train_id = ? AND start_station = ? AND end_station = ?",
-            [train_id, STATIONS[i], STATIONS[i + 1]]
+            "UPDATE train_segments SET available_seats = available_seats + ? WHERE train_id = ? AND start_station = ? AND end_station = ?",
+            [count, train_id, STATIONS[i], STATIONS[i + 1]]
           );
         }
 
-        // C. Redis 복구 (해당 탑승 구간들의 Redis 키 좌석 수 +1, 유저 임시 키 삭제)
+        // C. Redis 복구 (해당 탑승 구간들의 Redis 키 좌석 수 +count, 유저 임시 키 삭제)
         const userKey = `{train:${train_id}}:user:${user_id}:${reservation_uuid}`;
         const pipeline = redis.pipeline();
 
         for (let i = startIndex; i < endIndex; i++) {
-          pipeline.incr(`{train:${train_id}}:${STATIONS[i]}-${STATIONS[i + 1]}`);
+          pipeline.incrby(`{train:${train_id}}:${STATIONS[i]}-${STATIONS[i + 1]}`, count);
         }
         pipeline.del(userKey);
         await pipeline.exec();

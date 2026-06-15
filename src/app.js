@@ -5,6 +5,56 @@ const { SQSClient, SendMessageCommand } = require('@aws-sdk/client-sqs');
 const mysql = require('mysql2/promise');
 const config = require('./config'); // 중앙 설정 파일 로드
 
+// AWS Cognito JWT 검증 Verifier 및 인증 미들웨어 추가
+const { CognitoJwtVerifier } = require("aws-jwt-verify");
+
+let verifier = null;
+if (config.aws.userPoolId && config.aws.clientId) {
+  try {
+    verifier = CognitoJwtVerifier.create({
+      userPoolId: config.aws.userPoolId,
+      tokenUse: "id", // ID Token 검증용 (Access Token 검증 시 "access")
+      clientId: config.aws.clientId,
+    });
+    console.log("🔒 [Cognito] JWT Verifier가 정상적으로 초기화되었습니다.");
+  } catch (err) {
+    console.error("⚠️ [Cognito] JWT Verifier 초기화 실패 (Mock 모드로 진행):", err.message);
+  }
+} else {
+  console.log("ℹ️ [Cognito] 환경변수가 감지되지 않았습니다. 인증 Mock 모드로 동작합니다.");
+}
+
+// Cognito JWT 검증용 공통 인증 미들웨어
+const authMiddleware = async (req, res, next) => {
+  const isMock = process.env.USE_MOCK_AUTH === 'true' || !verifier;
+
+  if (isMock) {
+    // Mock 모드: 바디/쿼리/헤더에서 userId를 획득하고 없으면 테스트용 UUID 기본 사용
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith("Bearer ")) {
+      req.userId = authHeader.split(" ")[1];
+    } else {
+      req.userId = req.body.userId || req.query.userId || 'e9a6f3b0-4f51-4b7b-8c88-e9f06a1f81d1';
+    }
+    return next();
+  }
+
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      return res.status(401).json({ message: "인증 토큰(Bearer)이 누락되었습니다." });
+    }
+    const token = authHeader.split(" ")[1];
+    const payload = await verifier.verify(token);
+    req.userId = payload.sub; // 검증 완료된 Cognito sub을 req.userId로 바인딩
+    next();
+  } catch (err) {
+    console.error("❌ [Cognito] JWT 서명/만료시간 검증 실패:", err.message);
+    return res.status(401).json({ message: "유효하지 않거나 만료된 인증 토큰입니다." });
+  }
+};
+
+
 // MySQL DB 커넥션 풀 생성 (Azure SSL 접속 대응)
 const pool = mysql.createPool({
   host: config.db.host,
@@ -13,6 +63,7 @@ const pool = mysql.createPool({
   password: config.db.password,
   database: config.db.name,
   connectionLimit: 10,
+  charset: 'utf8mb4',
   ssl: {
     rejectUnauthorized: false
   }
@@ -30,6 +81,135 @@ app.use(cors({
 }));
 app.use(express.json());
 
+const crypto = require('crypto');
+
+// 테이블 스키마 자동 업그레이드 함수 (일반 로그인용 필드 추가)
+const ensureUserColumns = async () => {
+  try {
+    const connection = await pool.getConnection();
+    try {
+      const [columns] = await connection.execute("SHOW COLUMNS FROM users LIKE 'password'");
+      if (columns.length === 0) {
+        console.log("ℹ️ [DB] Adding 'password' column to 'users' table...");
+        await connection.execute("ALTER TABLE users ADD COLUMN password VARCHAR(255) NULL");
+      }
+      const [phoneCols] = await connection.execute("SHOW COLUMNS FROM users LIKE 'phone'");
+      if (phoneCols.length === 0) {
+        console.log("ℹ️ [DB] Adding 'phone' column to 'users' table...");
+        await connection.execute("ALTER TABLE users ADD COLUMN phone VARCHAR(50) NULL");
+      }
+      const [usernameCols] = await connection.execute("SHOW COLUMNS FROM users LIKE 'username'");
+      if (usernameCols.length === 0) {
+        console.log("ℹ️ [DB] Adding 'username' column to 'users' table...");
+        await connection.execute("ALTER TABLE users ADD COLUMN username VARCHAR(255) NULL UNIQUE");
+      }
+      
+      // reservations 테이블에 passenger_count 컬럼이 존재하는지 확인 및 추가
+      const [resCols] = await connection.execute("SHOW COLUMNS FROM reservations LIKE 'passenger_count'");
+      if (resCols.length === 0) {
+        console.log("ℹ️ [DB] Adding 'passenger_count' column to 'reservations' table...");
+        await connection.execute("ALTER TABLE reservations ADD COLUMN passenger_count INT NOT NULL DEFAULT 1");
+      }
+      
+      console.log("✅ [DB] 회원 및 예약 테이블 스키마 검증 완료!");
+    } finally {
+      connection.release();
+    }
+  } catch (err) {
+    console.warn("⚠️ [DB] 스키마 검증/업데이트 중 오류 발생 (DB가 오프라인일 수 있음):", err.message);
+  }
+};
+
+ensureUserColumns();
+
+// 회원가입 API
+app.post('/api/auth/signup', async (req, res) => {
+  const { userId, password, name, email, phone, cognito_sub } = req.body;
+
+  // 만약 Cognito 연동 가입 정보 등록 요청이라면
+  if (cognito_sub) {
+    try {
+      const [existing] = await pool.execute('SELECT id FROM users WHERE cognito_sub = ?', [cognito_sub]);
+      if (existing.length > 0) {
+        return res.json({ success: true, message: '이미 등록된 회원입니다.' });
+      }
+      await pool.execute(
+        'INSERT INTO users (cognito_sub, email, name) VALUES (?, ?, ?)',
+        [cognito_sub, email, name]
+      );
+      return res.status(201).json({ success: true, message: 'Cognito 회원정보가 동기화되었습니다.' });
+    } catch (err) {
+      console.error('❌ Cognito 회원정보 동기화 오류:', err);
+      return res.status(500).json({ message: '회원정보 동기화 중 오류가 발생했습니다.' });
+    }
+  }
+
+  // 일반/로컬 가입
+  if (!userId || !password || !name || !email) {
+    return res.status(400).json({ message: '필수 가입 정보가 누락되었습니다.' });
+  }
+
+  try {
+    // 중복 체크 (username 또는 email)
+    const [existing] = await pool.execute(
+      'SELECT id FROM users WHERE username = ? OR email = ?',
+      [userId, email]
+    );
+    if (existing.length > 0) {
+      return res.status(400).json({ message: '이미 사용 중인 아이디 또는 이메일입니다.' });
+    }
+
+    // Cognito Sub 대용 임의 UUID 생성
+    const mockSub = `mock-${crypto.randomUUID()}`;
+
+    await pool.execute(
+      'INSERT INTO users (cognito_sub, email, name, password, phone, username) VALUES (?, ?, ?, ?, ?, ?)',
+      [mockSub, email, name, password, phone || null, userId]
+    );
+
+    res.status(201).json({ success: true, message: '회원가입이 완료되었습니다.' });
+  } catch (err) {
+    console.error('❌ 회원가입 오류:', err);
+    res.status(500).json({ message: '회원가입 처리 중 서버 오류가 발생했습니다.' });
+  }
+});
+
+// 로그인 API
+app.post('/api/auth/login', async (req, res) => {
+  const { userId, password } = req.body;
+  if (!userId || !password) {
+    return res.status(400).json({ message: '아이디와 비밀번호를 입력해주세요.' });
+  }
+
+  try {
+    // username 또는 email로 조회
+    const [rows] = await pool.execute(
+      'SELECT cognito_sub, email, name, password FROM users WHERE username = ? OR email = ?',
+      [userId, userId]
+    );
+
+    if (rows.length === 0) {
+      return res.status(400).json({ message: '가입되지 않은 사용자입니다.' });
+    }
+
+    const user = rows[0];
+    if (user.password !== password) {
+      return res.status(400).json({ message: '비밀번호가 일치하지 않습니다.' });
+    }
+
+    res.json({
+      success: true,
+      cognito_sub: user.cognito_sub,
+      name: user.name,
+      email: user.email
+    });
+  } catch (err) {
+    console.error('❌ 로그인 오류:', err);
+    res.status(500).json({ message: '로그인 처리 중 서버 오류가 발생했습니다.' });
+  }
+});
+
+
 // Route 53 헬스체크용 엔드포인트
 app.get('/health', (req, res) => {
   if (process.env.HEALTH_FAIL === 'true') {
@@ -38,18 +218,21 @@ app.get('/health', (req, res) => {
   res.status(200).send('OK');
 });
 
-// Redis 캐시 서버 연결 (AWS EKS 배포 환경 - ElastiCache Redis Cluster TLS 연결)
-const redis = new Redis.Cluster(
-  [{ host: config.redis.host, port: config.redis.port }],
-  {
-    redisOptions: {
-      tls: {
-        // 클러스터 노드가 IP로 반환되더라도 TLS 호스트네임 검증을 통과하도록 설정
-        checkServerIdentity: () => undefined
+// Redis 캐시 서버 연결 (로컬 환경일 때는 Standalone으로, AWS EKS 배포 환경에서는 ElastiCache Redis Cluster TLS 연결)
+const isLocalRedis = config.redis.host === '127.0.0.1' || config.redis.host === 'localhost';
+const redis = isLocalRedis
+  ? new Redis({ host: config.redis.host, port: config.redis.port })
+  : new Redis.Cluster(
+      [{ host: config.redis.host, port: config.redis.port }],
+      {
+        redisOptions: {
+          tls: {
+            // 클러스터 노드가 IP로 반환되더라도 TLS 호스트네임 검증을 통과하도록 설정
+            checkServerIdentity: () => undefined
+          }
+        }
       }
-    }
-  }
-);
+    );
 
 redis.on('connect', () => console.log('⚡ Redis 캐시 서버 연결 완료!'));
 redis.on('error', (err) => {
@@ -69,6 +252,7 @@ const STATIONS = ['SEOUL', 'DAEJEON', 'DAEGU', 'BUSAN'];
 const MULTI_RESERVE_LUA = `
   local userKey = KEYS[1]
   local expireTime = tonumber(ARGV[1])
+  local count = tonumber(ARGV[2]) or 1
   
   if redis.call('EXISTS', userKey) == 1 then
     return -2
@@ -77,14 +261,14 @@ const MULTI_RESERVE_LUA = `
   for i = 2, #KEYS do
     local key = KEYS[i]
     local seats = redis.call('GET', key)
-    if not seats or tonumber(seats) <= 0 then
+    if not seats or tonumber(seats) < count then
       return -1
     end
   end
   
   for i = 2, #KEYS do
     local key = KEYS[i]
-    redis.call('DECR', key)
+    redis.call('DECRBY', key, count)
   end
   
   redis.call('SET', userKey, 'PENDING', 'EX', expireTime)
@@ -92,12 +276,14 @@ const MULTI_RESERVE_LUA = `
 `;
 
 // 예매 API (구간별 수량 차감 연동 방식)
-app.post('/api/reserve', async (req, res) => {
+app.post('/api/reserve', authMiddleware, async (req, res) => {
   if (process.env.READ_ONLY_MODE === 'true') {
     return res.status(403).json({ message: '현재 시스템은 재해 복구(DR) 대기 모드입니다. 조회 서비스만 이용 가능합니다.' });
   }
 
-  const { userId, trainId, startStation, endStation } = req.body;
+  const userId = req.userId;
+  const { trainId, startStation, endStation, passengerCount } = req.body;
+  const count = parseInt(passengerCount, 10) || 1;
 
   if (!userId || !trainId || !startStation || !endStation) {
     return res.status(400).json({ message: '필수 요청 파라미터가 누락되었습니다.' });
@@ -110,7 +296,7 @@ app.post('/api/reserve', async (req, res) => {
     if (userRows.length === 0) {
       console.log(`ℹ️ [Reserve] 신규 Cognito 유저 감지 (${userId}) - DB에 임시 계정을 생성합니다.`);
       const tempEmail = `user-${userId.substring(0, 8)}@korail-dev.com`;
-      
+
       // 랜덤 한국인 성명 생성기 (시연용 데이터 고도화)
       const surnames = ['김', '이', '박', '최', '정', '강', '조', '윤', '장', '임'];
       const firstNames = ['민준', '서준', '도윤', '예준', '시우', '하은', '서윤', '서연', '지우', '지유', '하윤', '준우', '지아', '수아', '지민'];
@@ -203,14 +389,14 @@ app.post('/api/reserve', async (req, res) => {
 
   try {
     // 3. Redis LUA 스크립트로 탑승 구간 전체 원자적 차감 실행 (userKey와 segmentKeys를 모두 KEYS 배열로 전달)
-    const result = await redis.eval(MULTI_RESERVE_LUA, segmentKeys.length + 1, userKey, ...segmentKeys, 300);
+    const result = await redis.eval(MULTI_RESERVE_LUA, segmentKeys.length + 1, userKey, ...segmentKeys, 300, count);
 
     if (result === -1) return res.status(400).json({ message: '매진 (일부 구간 좌석 매진)' });
     if (result === -2) return res.status(400).json({ message: '이미 예약 진행 중' });
 
     isReservedInRedis = true; // Redis 예약 성공 표시
 
-    // 4. SQS 메시지 전송 (구간 정보 및 reservationId 포함)
+    // 4. SQS 메시지 전송 (구간 정보, 인원 수 및 reservationId 포함)
     const messageBody = JSON.stringify({
       reservationId,
       userId: dbUserId, // SQS에는 DB의 숫자형 유저 ID를 발송
@@ -218,6 +404,7 @@ app.post('/api/reserve', async (req, res) => {
       startStation,
       endStation,
       status: 'PENDING',
+      passengerCount: count, // 인원 수 정보 추가
       timestamp: Date.now()
     });
 
@@ -231,12 +418,12 @@ app.post('/api/reserve', async (req, res) => {
   } catch (err) {
     console.error('❌ 예약 요청 처리 중 에러 발생:', err);
 
-    // 5. [롤백 로직] Redis 예약은 성공했으나 SQS 실패 시 모든 세그먼트 좌석 원상 복구
+    // 5. [롤백 로직] Redis 예약은 성공했으나 SQS 실패 시 모든 세그먼트 좌석 원상 복구 (인원 수만큼 복원)
     if (isReservedInRedis) {
       console.log(`🔄 [Rollback] SQS 전송 실패로 인해 Redis 상태를 롤백합니다. (User: ${dbUserId}, Train: ${trainId}, Res: ${reservationId})`);
       const rollbackPipeline = redis.pipeline();
       for (const key of segmentKeys) {
-        rollbackPipeline.incr(key);
+        rollbackPipeline.incrby(key, count);
       }
       rollbackPipeline.del(userKey);
       await rollbackPipeline.exec();
@@ -245,7 +432,7 @@ app.post('/api/reserve', async (req, res) => {
   }
 });
 
-// 열차 조회 API (구간별 잔여석의 최솟값 계산 방식)
+// 열차 조회 API (구간별 잔여석의 최솟값 계산 방식 + 열차 정보 추가)
 app.get('/api/trains/:trainId', async (req, res) => {
   const { trainId } = req.params;
   const { start, end } = req.query;
@@ -276,7 +463,6 @@ app.get('/api/trains/:trainId', async (req, res) => {
       isCacheMiss = seatValues.some(val => val === null);
     } catch (redisErr) {
       console.warn('⚠️ Redis 연결 실패로 인해 DB에서 직접 조회합니다:', redisErr.message);
-      // Redis 조회 실패 시 캐시 미스로 처리하여 DB 쿼리로 폴백
       isCacheMiss = true;
       seatValues = null;
     }
@@ -307,7 +493,6 @@ app.get('/api/trains/:trainId', async (req, res) => {
 
       let minSeats = Infinity;
 
-      // Redis가 연결되어 있을 때만 캐시 쓰기 파이프라인 수행
       try {
         const writePipeline = redis.pipeline();
         rows.forEach(row => {
@@ -320,7 +505,6 @@ app.get('/api/trains/:trainId', async (req, res) => {
         await writePipeline.exec();
       } catch (writeErr) {
         console.warn('⚠️ Redis 캐시 쓰기 실패 (DB 조회 결과로 계속 진행):', writeErr.message);
-        // 캐시 실패 시 메모리상에서 직접 최솟값 계산
         minSeats = Infinity;
         rows.forEach(row => {
           if (row.available_seats < minSeats) {
@@ -332,15 +516,31 @@ app.get('/api/trains/:trainId', async (req, res) => {
       finalAvailableSeats = minSeats;
 
     } else {
-      // 캐시 히트 시 가져온 잔여석 값 중 최솟값(Minimum)이 예매 가능 수량이 됨
       finalAvailableSeats = Math.min(...seatValues.map(val => parseInt(val, 10)));
+    }
+
+    // DB에서 trains 정보도 조회해서 같이 내려줍니다.
+    const [trainRows] = await pool.execute(
+      'SELECT train_number, departure_date, departure_time, arrival_time FROM trains WHERE id = ?',
+      [trainId]
+    );
+
+    let trainInfo = {};
+    if (trainRows.length > 0) {
+      trainInfo = {
+        trainNumber: trainRows[0].train_number,
+        departureDate: trainRows[0].departure_date,
+        departureTime: trainRows[0].departure_time,
+        arrivalTime: trainRows[0].arrival_time
+      };
     }
 
     res.json({
       trainId,
       startStation,
       endStation,
-      availableSeats: finalAvailableSeats
+      availableSeats: finalAvailableSeats,
+      ...trainInfo
     });
   } catch (err) {
     console.error(err);
@@ -348,13 +548,150 @@ app.get('/api/trains/:trainId', async (req, res) => {
   }
 });
 
+// 열차 목록 조회 API (날짜, 시간, 출발역, 도착역 필터링 및 구간별 최솟값 계산)
+app.get('/api/trains', async (req, res) => {
+  const { start, end, date, time } = req.query;
+
+  if (!date) {
+    return res.status(400).json({ message: '출발 날짜(date)는 필수 입력 항목입니다.' });
+  }
+
+  const startStation = start || 'SEOUL';
+  const endStation = end || 'BUSAN';
+  let queryTime = time || '00:00:00';
+  if (queryTime.length === 5) {
+    queryTime += ':00'; // HH:MM -> HH:MM:00
+  }
+
+  const startIndex = STATIONS.indexOf(startStation);
+  const endIndex = STATIONS.indexOf(endStation);
+
+  if (startIndex === -1 || endIndex === -1 || startIndex >= endIndex) {
+    return res.status(400).json({ message: '유효하지 않은 출발역 또는 도착역입니다.' });
+  }
+
+  try {
+    // 1. 지정된 날짜 및 시간 이후에 출발하는 열차 목록을 DB에서 기본 조회
+    const [trains] = await pool.execute(
+      'SELECT id, train_number, segment, departure_date, departure_time, arrival_time, total_seats FROM trains WHERE departure_date = ? AND departure_time >= ? ORDER BY departure_time ASC',
+      [date, queryTime]
+    );
+
+    if (trains.length === 0) {
+      return res.json([]);
+    }
+
+    const result = [];
+    const allKeys = [];
+    const trainSegmentMap = {};
+
+    trains.forEach(train => {
+      const segmentKeys = [];
+      for (let i = startIndex; i < endIndex; i++) {
+        const key = `{train:${train.id}}:${STATIONS[i]}-${STATIONS[i + 1]}`;
+        segmentKeys.push(key);
+        allKeys.push(key);
+      }
+      trainSegmentMap[train.id] = segmentKeys;
+    });
+
+    let cachedValues = [];
+    let isRedisAvailable = true;
+
+    try {
+      if (allKeys.length > 0) {
+        cachedValues = await redis.mget(...allKeys);
+      }
+    } catch (redisErr) {
+      console.warn('⚠️ [ListTrains] Redis MGET 실패, DB 직접 조회로 폴백:', redisErr.message);
+      isRedisAvailable = false;
+    }
+
+    const cacheMap = {};
+    allKeys.forEach((key, idx) => {
+      cacheMap[key] = (isRedisAvailable && cachedValues[idx] !== null) ? parseInt(cachedValues[idx], 10) : null;
+    });
+
+    for (const train of trains) {
+      const keys = trainSegmentMap[train.id];
+      const missingKeys = keys.filter(k => cacheMap[k] === null);
+
+      let finalAvailableSeats;
+
+      if (missingKeys.length > 0) {
+        console.log(`ℹ️ [ListTrains] Cache Miss - DB에서 열차 ${train.id}의 구간 데이터를 로드합니다.`);
+
+        const querySegments = [];
+        for (let i = startIndex; i < endIndex; i++) {
+          querySegments.push([STATIONS[i], STATIONS[i + 1]]);
+        }
+
+        const placeholders = querySegments.map(() => '(start_station = ? AND end_station = ?)').join(' OR ');
+        const queryParams = [train.id];
+        querySegments.forEach(seg => queryParams.push(seg[0], seg[1]));
+
+        const [rows] = await pool.execute(
+          `SELECT start_station, end_station, available_seats FROM train_segments WHERE train_id = ? AND (${placeholders})`,
+          queryParams
+        );
+
+        if (rows.length !== querySegments.length) {
+          continue; // 구간 정보 불완전 시 제외
+        }
+
+        let minSeats = Infinity;
+        const writePipeline = redis.pipeline();
+
+        rows.forEach(row => {
+          const key = `{train:${train.id}}:${row.start_station}-${row.end_station}`;
+          if (isRedisAvailable) {
+            writePipeline.set(key, row.available_seats, 'EX', 3600);
+          }
+          if (row.available_seats < minSeats) {
+            minSeats = row.available_seats;
+          }
+        });
+
+        if (isRedisAvailable) {
+          try {
+            await writePipeline.exec();
+          } catch (writeErr) {
+            console.warn('⚠️ [ListTrains] Redis 캐시 쓰기 실패:', writeErr.message);
+          }
+        }
+
+        finalAvailableSeats = minSeats;
+      } else {
+        finalAvailableSeats = Math.min(...keys.map(k => cacheMap[k]));
+      }
+
+      result.push({
+        trainId: train.id,
+        trainNumber: train.train_number,
+        departureDate: train.departure_date,
+        departureTime: train.departure_time,
+        arrivalTime: train.arrival_time,
+        totalSeats: train.total_seats,
+        availableSeats: finalAvailableSeats
+      });
+    }
+
+    res.json(result);
+
+  } catch (err) {
+    console.error('❌ [ListTrains] 열차 목록 조회 중 에러:', err);
+    res.status(500).json({ message: '열차 목록 조회 중 서버 에러가 발생했습니다.' });
+  }
+});
+
 // 예약 확정 (결제 완료) API
-app.post('/api/reserve/confirm', async (req, res) => {
+app.post('/api/reserve/confirm', authMiddleware, async (req, res) => {
   if (process.env.READ_ONLY_MODE === 'true') {
     return res.status(403).json({ message: '현재 시스템은 재해 복구(DR) 대기 모드입니다. 결제 및 예매 확정이 불가능합니다.' });
   }
 
-  const { userId, trainId, reservationId } = req.body;
+  const userId = req.userId;
+  const { trainId, reservationId } = req.body;
 
   if (!userId || !trainId || !reservationId) {
     return res.status(400).json({ message: 'userId, trainId, reservationId가 필요합니다.' });
@@ -466,5 +803,6 @@ const PORT = config.port;
 app.listen(PORT, () => {
   console.log(`\n==================================================`);
   console.log(`🚀 코레일 다중구간 예매 서버가 포트 ${PORT}에서 실행 중입니다.`);
+  console.log(`==================================================`);
   console.log(`==================================================`);
 });

@@ -10,6 +10,8 @@ services:
     environment:
       MYSQL_ROOT_PASSWORD: rootpassword # 로컬용 임시 비밀번호
       MYSQL_DATABASE: trail_db         # 실행 시 자동으로 만들어질 DB 이름
+      MYSQL_USER: admin                # 백엔드 .env와 일치하는 계정명
+      MYSQL_PASSWORD: Password123!     # 백엔드 .env와 일치하는 비밀번호
     volumes:
       - mysql_data:/var/lib/mysql
       - ./init.sql:/docker-entrypoint-initdb.d/init.sql
