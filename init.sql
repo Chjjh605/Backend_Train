@@ -51,108 +51,72 @@ INSERT IGNORE INTO users (id, cognito_sub, email, name) VALUES
 (1, 'user123', 'whwogus2483@naver.com', '네이버'),
 (2, '1', 'chjjh605@gmail.com', '구글');
 
--- 1번 열차 (KTX 001, 출발 05:13)
+-- 1번 열차 (KTX 001, 출발 09:13)
 INSERT IGNORE INTO trains (id, train_number, segment, departure_time, total_seats, available_seats) 
-VALUES (1, 'KTX-001', '서울-부산', '2026-06-20 05:13:00', 100, 100);
+VALUES (1, 'KTX-001', '서울-부산', '2026-06-20 09:13:00', 100, 100);
 
 INSERT IGNORE INTO train_segments (train_id, start_station, end_station, total_seats, available_seats) VALUES
 (1, 'SEOUL', 'DAEJEON', 100, 100),
 (1, 'DAEJEON', 'DAEGU', 100, 100),
 (1, 'DAEGU', 'BUSAN', 100, 100);
 
--- 2번 열차 (KTX 161, 출발 05:18)
+-- 2번 열차 (KTX 161, 출발 09:50)
 INSERT IGNORE INTO trains (id, train_number, segment, departure_time, total_seats, available_seats) 
-VALUES (2, 'KTX-161', '서울-부산', '2026-06-20 05:18:00', 100, 100);
+VALUES (2, 'KTX-161', '서울-부산', '2026-06-20 09:50:00', 100, 100);
 
 INSERT IGNORE INTO train_segments (train_id, start_station, end_station, total_seats, available_seats) VALUES
 (2, 'SEOUL', 'DAEJEON', 100, 100),
 (2, 'DAEJEON', 'DAEGU', 100, 100),
 (2, 'DAEGU', 'BUSAN', 100, 100);
 
-<<<<<<< HEAD
--- 3번 열차 (KTX 001)
+-- 3번 열차 (KTX 003, 출발 10:10)
 INSERT IGNORE INTO trains (id, train_number, segment, departure_time, total_seats, available_seats) 
-VALUES (3, 'KTX-101', '서울-부산', '2026-06-10 12:00:00', 100, 100);
-=======
--- 3번 열차 (KTX 003, 출발 05:27)
-INSERT IGNORE INTO trains (id, train_number, segment, departure_time, total_seats, available_seats) 
-VALUES (3, 'KTX-003', '서울-부산', '2026-06-20 05:27:00', 100, 100);
->>>>>>> c0731334b738b88f0cbb7ee4713e0da397960a9d
+VALUES (3, 'KTX-003', '서울-부산', '2026-06-20 10:10:00', 100, 100);
 
 INSERT IGNORE INTO train_segments (train_id, start_station, end_station, total_seats, available_seats) VALUES
 (3, 'SEOUL', 'DAEJEON', 100, 100),
 (3, 'DAEJEON', 'DAEGU', 100, 100),
 (3, 'DAEGU', 'BUSAN', 100, 100);
 
-<<<<<<< HEAD
--- 4번 열차 (KTX 161)
+-- 4번 열차 (ITX-새마을 1001, 출발 11:20)
 INSERT IGNORE INTO trains (id, train_number, segment, departure_time, total_seats, available_seats) 
-VALUES (4, 'KTX-161', '서울-부산', '2026-06-10 13:00:00', 100, 100);
-=======
--- 4번 열차 (ITX-새마을 1001, 출발 05:54)
-INSERT IGNORE INTO trains (id, train_number, segment, departure_time, total_seats, available_seats) 
-VALUES (4, 'ITX-새마을 1001', '서울-부산', '2026-06-20 05:54:00', 100, 100);
->>>>>>> c0731334b738b88f0cbb7ee4713e0da397960a9d
+VALUES (4, 'ITX-새마을 1001', '서울-부산', '2026-06-20 11:20:00', 100, 100);
 
 INSERT IGNORE INTO train_segments (train_id, start_station, end_station, total_seats, available_seats) VALUES
 (4, 'SEOUL', 'DAEJEON', 100, 100),
 (4, 'DAEJEON', 'DAEGU', 100, 100),
 (4, 'DAEGU', 'BUSAN', 100, 100);
 
-<<<<<<< HEAD
--- 5번 열차 (KTX 001)
+-- 5번 열차 (KTX 005, 출발 12:05)
 INSERT IGNORE INTO trains (id, train_number, segment, departure_time, total_seats, available_seats) 
-VALUES (5, 'KTX-101', '서울-부산', '2026-06-10 14:00:00', 100, 100);
-=======
--- 5번 열차 (KTX 005, 출발 05:58)
-INSERT IGNORE INTO trains (id, train_number, segment, departure_time, total_seats, available_seats) 
-VALUES (5, 'KTX-005', '서울-부산', '2026-06-20 05:58:00', 100, 100);
->>>>>>> c0731334b738b88f0cbb7ee4713e0da397960a9d
+VALUES (5, 'KTX-005', '서울-부산', '2026-06-20 12:05:00', 100, 100);
 
 INSERT IGNORE INTO train_segments (train_id, start_station, end_station, total_seats, available_seats) VALUES
 (5, 'SEOUL', 'DAEJEON', 100, 100),
 (5, 'DAEJEON', 'DAEGU', 100, 100),
 (5, 'DAEGU', 'BUSAN', 100, 100);
 
-<<<<<<< HEAD
--- 6번 열차 (KTX 161)
+-- 6번 열차 (KTX-산천 075, 출발 13:15)
 INSERT IGNORE INTO trains (id, train_number, segment, departure_time, total_seats, available_seats) 
-VALUES (6, 'KTX-161', '서울-부산', '2026-06-10 15:00:00', 100, 100);
-=======
--- 6번 열차 (KTX-산천 075, 출발 06:03)
-INSERT IGNORE INTO trains (id, train_number, segment, departure_time, total_seats, available_seats) 
-VALUES (6, 'KTX-산천 075', '서울-부산', '2026-06-20 06:03:00', 100, 100);
->>>>>>> c0731334b738b88f0cbb7ee4713e0da397960a9d
+VALUES (6, 'KTX-산천 075', '서울-부산', '2026-06-20 13:15:00', 100, 100);
 
 INSERT IGNORE INTO train_segments (train_id, start_station, end_station, total_seats, available_seats) VALUES
 (6, 'SEOUL', 'DAEJEON', 100, 100),
 (6, 'DAEJEON', 'DAEGU', 100, 100),
 (6, 'DAEGU', 'BUSAN', 100, 100);
 
-<<<<<<< HEAD
--- 7번 열차 (KTX 001)
+-- 7번 열차 (ITX-새마을 1003, 출발 14:40)
 INSERT IGNORE INTO trains (id, train_number, segment, departure_time, total_seats, available_seats) 
-VALUES (7, 'KTX-101', '서울-부산', '2026-06-10 16:00:00', 100, 100);
-=======
--- 7번 열차 (ITX-새마을 1003, 출발 06:13)
-INSERT IGNORE INTO trains (id, train_number, segment, departure_time, total_seats, available_seats) 
-VALUES (7, 'ITX-새마을 1003', '서울-부산', '2026-06-20 06:13:00', 100, 100);
->>>>>>> c0731334b738b88f0cbb7ee4713e0da397960a9d
+VALUES (7, 'ITX-새마을 1003', '서울-부산', '2026-06-20 14:40:00', 100, 100);
 
 INSERT IGNORE INTO train_segments (train_id, start_station, end_station, total_seats, available_seats) VALUES
 (7, 'SEOUL', 'DAEJEON', 100, 100),
 (7, 'DAEJEON', 'DAEGU', 100, 100),
 (7, 'DAEGU', 'BUSAN', 100, 100);
 
-<<<<<<< HEAD
--- 8번 열차 (KTX 161)
+-- 8번 열차 (무궁화호 1151, 출발 15:30)
 INSERT IGNORE INTO trains (id, train_number, segment, departure_time, total_seats, available_seats) 
-VALUES (8, 'KTX-161', '서울-부산', '2026-06-10 17:00:00', 100, 100);
-=======
--- 8번 열차 (무궁화호 1151, 출발 06:37)
-INSERT IGNORE INTO trains (id, train_number, segment, departure_time, total_seats, available_seats) 
-VALUES (8, '무궁화호 1151', '서울-부산', '2026-06-20 06:37:00', 100, 100);
->>>>>>> c0731334b738b88f0cbb7ee4713e0da397960a9d
+VALUES (8, '무궁화호 1151', '서울-부산', '2026-06-20 15:30:00', 100, 100);
 
 INSERT IGNORE INTO train_segments (train_id, start_station, end_station, total_seats, available_seats) VALUES
 (8, 'SEOUL', 'DAEJEON', 100, 100),
