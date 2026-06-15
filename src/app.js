@@ -41,7 +41,14 @@ app.get('/health', (req, res) => {
 // Redis 캐시 서버 연결 (AWS EKS 배포 환경 - ElastiCache Redis Cluster TLS 연결)
 const redis = new Redis.Cluster(
   [{ host: config.redis.host, port: config.redis.port }],
-  { redisOptions: { tls: {} } }
+  {
+    redisOptions: {
+      tls: {
+        // 클러스터 노드가 IP로 반환되더라도 TLS 호스트네임 검증을 통과하도록 설정
+        checkServerIdentity: () => undefined
+      }
+    }
+  }
 );
 
 redis.on('connect', () => console.log('⚡ Redis 캐시 서버 연결 완료!'));
@@ -296,7 +303,7 @@ app.get('/api/trains/:trainId', async (req, res) => {
           }
         });
       }
-      
+
       finalAvailableSeats = minSeats;
 
     } else {
