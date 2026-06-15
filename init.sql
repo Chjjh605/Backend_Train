@@ -47,8 +47,9 @@ CREATE TABLE reservations (
     INDEX idx_res_uuid (reservation_uuid)     -- UUID 조회 속도 최적화
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
-## 테스트용 데이터
-INSERT IGNORE INTO users (id, cognito_sub, email, name) VALUES (1, 'user123', 'test@example.com', '홍길동');
+INSERT IGNORE INTO users (id, cognito_sub, email, name) VALUES 
+(1, 'user123', 'whwogus2483@naver.com', '네이버'),
+(2, '1', 'chjjh605@gmail.com', '구글');
 
 -- 1번 열차 (KTX 001)
 INSERT IGNORE INTO trains (id, train_number, segment, departure_time, total_seats, available_seats) 
