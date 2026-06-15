@@ -221,10 +221,11 @@ app.get('/health', (req, res) => {
 // Redis 캐시 서버 연결 (로컬 환경일 때는 Standalone으로, AWS EKS 배포 환경에서는 ElastiCache Redis Cluster TLS 연결)
 const isLocalRedis = config.redis.host === '127.0.0.1' || config.redis.host === 'localhost';
 const redis = isLocalRedis
-  ? new Redis({ host: config.redis.host, port: config.redis.port })
+  ? new Redis({ host: config.redis.host, port: config.redis.port, enableOfflineQueue: false })
   : new Redis.Cluster(
       [{ host: config.redis.host, port: config.redis.port }],
       {
+        enableOfflineQueue: false,
         redisOptions: {
           tls: {
             // 클러스터 노드가 IP로 반환되더라도 TLS 호스트네임 검증을 통과하도록 설정
