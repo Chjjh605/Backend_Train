@@ -1,4 +1,4 @@
-## users (회원 테이블)
+-- users (회원 테이블)
 CREATE TABLE users (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
     cognito_sub VARCHAR(255) NOT NULL UNIQUE, -- AWS Cognito JWT 검증용 식별자 (자동으로 Unique Index 생성됨)
@@ -6,7 +6,7 @@ CREATE TABLE users (
     name VARCHAR(50) NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
-## trains (기차 및 구간 정보 테이블)
+-- trains (기차 및 구간 정보 테이블)
 CREATE TABLE trains (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
     train_number VARCHAR(50) NOT NULL,        -- 예: KTX-101
@@ -17,7 +17,7 @@ CREATE TABLE trains (
   INDEX idx_segment_departure (segment, departure_time)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
-## train_segments (구간별 상세 잔여석 테이블)
+-- train_segments (구간별 상세 잔여석 테이블)
 CREATE TABLE train_segments (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
     train_id BIGINT NOT NULL,
@@ -29,7 +29,7 @@ CREATE TABLE train_segments (
     UNIQUE KEY idx_train_segment (train_id, start_station, end_station)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
-## reservations (예매 내역 테이블 - 최종 영수증)
+-- reservations (예매 내역 테이블 - 최종 영수증)
 CREATE TABLE reservations (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
     reservation_uuid VARCHAR(36) NOT NULL UNIQUE, -- 클라이언트/서버 생성 고유 예약 식별자
@@ -51,20 +51,74 @@ INSERT IGNORE INTO users (id, cognito_sub, email, name) VALUES
 (1, 'user123', 'whwogus2483@naver.com', '네이버'),
 (2, '1', 'chjjh605@gmail.com', '구글');
 
--- 1번 열차 (KTX 001)
+-- 1번 열차 (KTX 001, 출발 05:13)
 INSERT IGNORE INTO trains (id, train_number, segment, departure_time, total_seats, available_seats) 
-VALUES (1, 'KTX-101', '서울-부산', '2026-06-10 10:00:00', 100, 100);
+VALUES (1, 'KTX-001', '서울-부산', '2026-06-20 05:13:00', 100, 100);
 
 INSERT IGNORE INTO train_segments (train_id, start_station, end_station, total_seats, available_seats) VALUES
 (1, 'SEOUL', 'DAEJEON', 100, 100),
 (1, 'DAEJEON', 'DAEGU', 100, 100),
 (1, 'DAEGU', 'BUSAN', 100, 100);
 
--- 2번 열차 (KTX 161)
+-- 2번 열차 (KTX 161, 출발 05:18)
 INSERT IGNORE INTO trains (id, train_number, segment, departure_time, total_seats, available_seats) 
-VALUES (2, 'KTX-161', '서울-부산', '2026-06-10 11:00:00', 100, 100);
+VALUES (2, 'KTX-161', '서울-부산', '2026-06-20 05:18:00', 100, 100);
 
 INSERT IGNORE INTO train_segments (train_id, start_station, end_station, total_seats, available_seats) VALUES
 (2, 'SEOUL', 'DAEJEON', 100, 100),
 (2, 'DAEJEON', 'DAEGU', 100, 100),
 (2, 'DAEGU', 'BUSAN', 100, 100);
+
+-- 3번 열차 (KTX 003, 출발 05:27)
+INSERT IGNORE INTO trains (id, train_number, segment, departure_time, total_seats, available_seats) 
+VALUES (3, 'KTX-003', '서울-부산', '2026-06-20 05:27:00', 100, 100);
+
+INSERT IGNORE INTO train_segments (train_id, start_station, end_station, total_seats, available_seats) VALUES
+(3, 'SEOUL', 'DAEJEON', 100, 100),
+(3, 'DAEJEON', 'DAEGU', 100, 100),
+(3, 'DAEGU', 'BUSAN', 100, 100);
+
+-- 4번 열차 (ITX-새마을 1001, 출발 05:54)
+INSERT IGNORE INTO trains (id, train_number, segment, departure_time, total_seats, available_seats) 
+VALUES (4, 'ITX-새마을 1001', '서울-부산', '2026-06-20 05:54:00', 100, 100);
+
+INSERT IGNORE INTO train_segments (train_id, start_station, end_station, total_seats, available_seats) VALUES
+(4, 'SEOUL', 'DAEJEON', 100, 100),
+(4, 'DAEJEON', 'DAEGU', 100, 100),
+(4, 'DAEGU', 'BUSAN', 100, 100);
+
+-- 5번 열차 (KTX 005, 출발 05:58)
+INSERT IGNORE INTO trains (id, train_number, segment, departure_time, total_seats, available_seats) 
+VALUES (5, 'KTX-005', '서울-부산', '2026-06-20 05:58:00', 100, 100);
+
+INSERT IGNORE INTO train_segments (train_id, start_station, end_station, total_seats, available_seats) VALUES
+(5, 'SEOUL', 'DAEJEON', 100, 100),
+(5, 'DAEJEON', 'DAEGU', 100, 100),
+(5, 'DAEGU', 'BUSAN', 100, 100);
+
+-- 6번 열차 (KTX-산천 075, 출발 06:03)
+INSERT IGNORE INTO trains (id, train_number, segment, departure_time, total_seats, available_seats) 
+VALUES (6, 'KTX-산천 075', '서울-부산', '2026-06-20 06:03:00', 100, 100);
+
+INSERT IGNORE INTO train_segments (train_id, start_station, end_station, total_seats, available_seats) VALUES
+(6, 'SEOUL', 'DAEJEON', 100, 100),
+(6, 'DAEJEON', 'DAEGU', 100, 100),
+(6, 'DAEGU', 'BUSAN', 100, 100);
+
+-- 7번 열차 (ITX-새마을 1003, 출발 06:13)
+INSERT IGNORE INTO trains (id, train_number, segment, departure_time, total_seats, available_seats) 
+VALUES (7, 'ITX-새마을 1003', '서울-부산', '2026-06-20 06:13:00', 100, 100);
+
+INSERT IGNORE INTO train_segments (train_id, start_station, end_station, total_seats, available_seats) VALUES
+(7, 'SEOUL', 'DAEJEON', 100, 100),
+(7, 'DAEJEON', 'DAEGU', 100, 100),
+(7, 'DAEGU', 'BUSAN', 100, 100);
+
+-- 8번 열차 (무궁화호 1151, 출발 06:37)
+INSERT IGNORE INTO trains (id, train_number, segment, departure_time, total_seats, available_seats) 
+VALUES (8, '무궁화호 1151', '서울-부산', '2026-06-20 06:37:00', 100, 100);
+
+INSERT IGNORE INTO train_segments (train_id, start_station, end_station, total_seats, available_seats) VALUES
+(8, 'SEOUL', 'DAEJEON', 100, 100),
+(8, 'DAEJEON', 'DAEGU', 100, 100),
+(8, 'DAEGU', 'BUSAN', 100, 100);
