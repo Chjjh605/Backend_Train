@@ -103,17 +103,42 @@ app.post('/api/reserve', async (req, res) => {
     return res.status(400).json({ message: '필수 요청 파라미터가 누락되었습니다.' });
   }
 
-  // Cognito sub (문자열)를 데이터베이스 사용자 기본키 id (숫자형)로 변환
+  // Cognito sub (문자열)를 데이터베이스 사용자 기본키 id (숫자형)로 변환 (미등록 Cognito 유저인 경우 동적 생성)
   let dbUserId;
   try {
     const [userRows] = await pool.execute('SELECT id FROM users WHERE cognito_sub = ?', [userId]);
     if (userRows.length === 0) {
-      return res.status(400).json({ message: '등록되지 않은 Cognito 유저입니다.' });
+      console.log(`ℹ️ [Reserve] 신규 Cognito 유저 감지 (${userId}) - DB에 임시 계정을 생성합니다.`);
+      const tempEmail = `user-${userId.substring(0, 8)}@korail-dev.com`;
+      
+      // 랜덤 한국인 성명 생성기 (시연용 데이터 고도화)
+      const surnames = ['김', '이', '박', '최', '정', '강', '조', '윤', '장', '임'];
+      const firstNames = ['민준', '서준', '도윤', '예준', '시우', '하은', '서윤', '서연', '지우', '지유', '하윤', '준우', '지아', '수아', '지민'];
+      const randomSurname = surnames[Math.floor(Math.random() * surnames.length)];
+      const randomFirstName = firstNames[Math.floor(Math.random() * firstNames.length)];
+      const tempName = `${randomSurname}${randomFirstName}`;
+
+      try {
+        const [insertResult] = await pool.execute(
+          'INSERT INTO users (cognito_sub, email, name) VALUES (?, ?, ?)',
+          [userId, tempEmail, tempName]
+        );
+        dbUserId = insertResult.insertId;
+      } catch (insertErr) {
+        // 병렬 요청으로 인해 중복 삽입 에러가 발생한 경우 재조회하여 ID 획득
+        if (insertErr.code === 'ER_DUP_ENTRY') {
+          const [retryRows] = await pool.execute('SELECT id FROM users WHERE cognito_sub = ?', [userId]);
+          dbUserId = retryRows[0].id;
+        } else {
+          throw insertErr;
+        }
+      }
+    } else {
+      dbUserId = userRows[0].id;
     }
-    dbUserId = userRows[0].id;
   } catch (dbErr) {
-    console.error('❌ [Reserve] 유저 DB 조회 중 오류:', dbErr.message);
-    return res.status(500).json({ message: '사용자 정보 조회 중 서버 오류가 발생했습니다.' });
+    console.error('❌ [Reserve] 유저 DB 조회/생성 중 오류:', dbErr.message);
+    return res.status(500).json({ message: '사용자 정보 조회/등록 중 서버 오류가 발생했습니다.' });
   }
 
   const startIndex = STATIONS.indexOf(startStation);
