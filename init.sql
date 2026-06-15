@@ -68,3 +68,57 @@ INSERT IGNORE INTO train_segments (train_id, start_station, end_station, total_s
 (2, 'SEOUL', 'DAEJEON', 100, 100),
 (2, 'DAEJEON', 'DAEGU', 100, 100),
 (2, 'DAEGU', 'BUSAN', 100, 100);
+
+-- 3번 열차 (KTX 001)
+INSERT IGNORE INTO trains (id, train_number, segment, departure_time, total_seats, available_seats) 
+VALUES (3, 'KTX-101', '서울-부산', '2026-06-10 12:00:00', 100, 100);
+
+INSERT IGNORE INTO train_segments (train_id, start_station, end_station, total_seats, available_seats) VALUES
+(3, 'SEOUL', 'DAEJEON', 100, 100),
+(3, 'DAEJEON', 'DAEGU', 100, 100),
+(3, 'DAEGU', 'BUSAN', 100, 100);
+
+-- 4번 열차 (KTX 161)
+INSERT IGNORE INTO trains (id, train_number, segment, departure_time, total_seats, available_seats) 
+VALUES (4, 'KTX-161', '서울-부산', '2026-06-10 13:00:00', 100, 100);
+
+INSERT IGNORE INTO train_segments (train_id, start_station, end_station, total_seats, available_seats) VALUES
+(4, 'SEOUL', 'DAEJEON', 100, 100),
+(4, 'DAEJEON', 'DAEGU', 100, 100),
+(4, 'DAEGU', 'BUSAN', 100, 100);
+
+-- 5번 열차 (KTX 001)
+INSERT IGNORE INTO trains (id, train_number, segment, departure_time, total_seats, available_seats) 
+VALUES (5, 'KTX-101', '서울-부산', '2026-06-10 14:00:00', 100, 100);
+
+INSERT IGNORE INTO train_segments (train_id, start_station, end_station, total_seats, available_seats) VALUES
+(5, 'SEOUL', 'DAEJEON', 100, 100),
+(5, 'DAEJEON', 'DAEGU', 100, 100),
+(5, 'DAEGU', 'BUSAN', 100, 100);
+
+-- 6번 열차 (KTX 161)
+INSERT IGNORE INTO trains (id, train_number, segment, departure_time, total_seats, available_seats) 
+VALUES (6, 'KTX-161', '서울-부산', '2026-06-10 15:00:00', 100, 100);
+
+INSERT IGNORE INTO train_segments (train_id, start_station, end_station, total_seats, available_seats) VALUES
+(6, 'SEOUL', 'DAEJEON', 100, 100),
+(6, 'DAEJEON', 'DAEGU', 100, 100),
+(6, 'DAEGU', 'BUSAN', 100, 100);
+
+-- 7번 열차 (KTX 001)
+INSERT IGNORE INTO trains (id, train_number, segment, departure_time, total_seats, available_seats) 
+VALUES (7, 'KTX-101', '서울-부산', '2026-06-10 16:00:00', 100, 100);
+
+INSERT IGNORE INTO train_segments (train_id, start_station, end_station, total_seats, available_seats) VALUES
+(7, 'SEOUL', 'DAEJEON', 100, 100),
+(7, 'DAEJEON', 'DAEGU', 100, 100),
+(7, 'DAEGU', 'BUSAN', 100, 100);
+
+-- 8번 열차 (KTX 161)
+INSERT IGNORE INTO trains (id, train_number, segment, departure_time, total_seats, available_seats) 
+VALUES (8, 'KTX-161', '서울-부산', '2026-06-10 17:00:00', 100, 100);
+
+INSERT IGNORE INTO train_segments (train_id, start_station, end_station, total_seats, available_seats) VALUES
+(8, 'SEOUL', 'DAEJEON', 100, 100),
+(8, 'DAEJEON', 'DAEGU', 100, 100),
+(8, 'DAEGU', 'BUSAN', 100, 100);
