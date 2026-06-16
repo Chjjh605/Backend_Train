@@ -135,6 +135,24 @@ const ensureUserColumns = async () => {
 
 ensureUserColumns();
 
+// 아이디로 이메일 조회 API (Cognito 이메일 로그인 우회용)
+app.get('/api/auth/lookup', async (req, res) => {
+  const { userId } = req.query;
+  if (!userId) {
+    return res.status(400).json({ message: 'userId가 필요합니다.' });
+  }
+  try {
+    const [rows] = await pool.execute('SELECT email FROM users WHERE username = ?', [userId]);
+    if (rows.length === 0) {
+      return res.status(404).json({ message: '가입되지 않은 아이디입니다.' });
+    }
+    res.json({ email: rows[0].email });
+  } catch (err) {
+    console.error('❌ 유저 조회 오류:', err);
+    res.status(500).json({ message: '서버 오류가 발생했습니다.' });
+  }
+});
+
 // 회원가입 API
 app.post('/api/auth/signup', async (req, res) => {
   const { userId, password, name, email, phone, cognito_sub } = req.body;
