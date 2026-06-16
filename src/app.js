@@ -147,8 +147,8 @@ app.post('/api/auth/signup', async (req, res) => {
         return res.json({ success: true, message: '이미 등록된 회원입니다.' });
       }
       await pool.execute(
-        'INSERT INTO users (cognito_sub, email, name) VALUES (?, ?, ?)',
-        [cognito_sub, email, name]
+        'INSERT INTO users (cognito_sub, email, name, username, phone) VALUES (?, ?, ?, ?, ?)',
+        [cognito_sub, email, name, userId || null, phone || null]
       );
       return res.status(201).json({ success: true, message: 'Cognito 회원정보가 동기화되었습니다.' });
     } catch (err) {
@@ -223,6 +223,17 @@ app.post('/api/auth/login', async (req, res) => {
   }
 });
 
+
+// Cognito 설정 정보 제공 API (프론트에서 SDK 초기화에 사용, 하드코딩 방지)
+app.get('/api/auth/config', (req, res) => {
+  const isMock = process.env.USE_MOCK_AUTH === 'true' || !verifier;
+  res.json({
+    mockMode: isMock,
+    region: config.aws.region,
+    userPoolId: isMock ? null : config.aws.userPoolId,
+    clientId: isMock ? null : config.aws.clientId,
+  });
+});
 
 // Route 53 헬스체크용 엔드포인트
 app.get('/health', (req, res) => {
