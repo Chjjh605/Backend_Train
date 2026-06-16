@@ -10,6 +10,7 @@ const redis = isLocalRedis
   : new Redis.Cluster(
       [{ host: config.redis.host, port: config.redis.port }],
       { 
+        dnsLookup: (address, callback) => callback(null, address),
         enableOfflineQueue: false,
         redisOptions: { tls: {} } 
       }
