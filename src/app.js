@@ -64,6 +64,7 @@ const pool = mysql.createPool({
   database: config.db.name,
   connectionLimit: 10,
   charset: 'utf8mb4',
+  multipleStatements: true, // 복수 쿼리 일괄 실행 허용 (init.sql 등)
   ssl: {
     rejectUnauthorized: false
   }
@@ -88,6 +89,18 @@ const ensureUserColumns = async () => {
   try {
     const connection = await pool.getConnection();
     try {
+      // 서버 시작 시 데이터베이스 스키마 및 초기 데이터 자동 주입
+      const fs = require('fs');
+      const path = require('path');
+      const initSqlPath = path.join(__dirname, '../init.sql');
+
+      if (fs.existsSync(initSqlPath)) {
+        console.log("🔄 [DB] init.sql 자동 실행 중...");
+        const initSql = fs.readFileSync(initSqlPath, 'utf8');
+        await connection.query(initSql);
+        console.log("✅ [DB] init.sql 자동 주입 완료!");
+      }
+
       const [columns] = await connection.execute("SHOW COLUMNS FROM users LIKE 'password'");
       if (columns.length === 0) {
         console.log("ℹ️ [DB] Adding 'password' column to 'users' table...");
