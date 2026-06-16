@@ -448,6 +448,106 @@ app.post('/api/reserve', authMiddleware, async (req, res) => {
   }
 });
 
+// 승차권 조회 API (GET) - 프론트 MyTicketList / TicketInfo 연동용
+// 케이스 1: ?userId=...         → 회원의 최신 SUCCESS 예약 1건 조회 → { ticket: {...} }
+// 케이스 2: ?ticketNumber=...&email=... → 비회원 발권번호+이메일로 단건 조회
+app.get('/api/reserve', async (req, res) => {
+  const { userId, ticketNumber, email } = req.query;
+
+  // ── 케이스 1: 회원 최신 예약 조회 (MyTicketList.tsx) ──
+  if (userId) {
+    try {
+      const [rows] = await pool.execute(`
+        SELECT
+          r.reservation_uuid,
+          r.start_station,
+          r.end_station,
+          r.passenger_count,
+          t.train_number,
+          t.departure_date,
+          t.departure_time,
+          t.arrival_time
+        FROM reservations r
+        JOIN trains t ON r.train_id = t.id
+        WHERE r.user_id = (SELECT id FROM users WHERE cognito_sub = ? LIMIT 1)
+          AND r.status = 'SUCCESS'
+        ORDER BY r.created_at DESC
+        LIMIT 1
+      `, [userId]);
+
+      if (rows.length === 0) {
+        return res.status(404).json({ message: '조회된 승차권이 없습니다.' });
+      }
+
+      const row = rows[0];
+
+      // departure_date(YYYY-MM-DD 또는 Date 객체)에서 년/월/일 파싱
+      const depDateStr = row.departure_date instanceof Date
+        ? row.departure_date.toISOString().slice(0, 10)
+        : String(row.departure_date).slice(0, 10);
+      const [yearStr, monthStr, dayStr] = depDateStr.split('-');
+
+      // 프론트 TicketData 인터페이스에 맞춰 응답 구성
+      const ticket = {
+        reservationId: row.reservation_uuid,
+        startStation: row.start_station,
+        endStation: row.end_station,
+        selectedYear: parseInt(yearStr, 10),
+        selectedMonth: parseInt(monthStr, 10),
+        selectedDay: parseInt(dayStr, 10),
+        depTime: row.departure_time,
+        trainType: 'KTX',
+        trainNumber: row.train_number,
+        seatType: '일반실',
+        passengerStr: `어른 ${row.passenger_count}명`,
+        totalPassengers: row.passenger_count,
+        totalPriceStr: `${(row.passenger_count * 59800).toLocaleString()}원`
+      };
+
+      return res.json({ ticket });
+    } catch (err) {
+      console.error('❌ [GET /api/reserve] 회원 승차권 조회 오류:', err.message);
+      return res.status(500).json({ message: '승차권 조회 중 서버 오류가 발생했습니다.' });
+    }
+  }
+
+  // ── 케이스 2: 비회원 발권번호 + 이메일 조회 (TicketInfo.tsx) ──
+  if (ticketNumber && email) {
+    try {
+      const [rows] = await pool.execute(`
+        SELECT
+          r.reservation_uuid,
+          r.start_station,
+          r.end_station,
+          r.status,
+          r.passenger_count,
+          r.created_at,
+          t.train_number,
+          t.departure_date,
+          t.departure_time,
+          t.arrival_time,
+          u.name AS passenger_name
+        FROM reservations r
+        JOIN trains t ON r.train_id = t.id
+        JOIN users u ON r.user_id = u.id
+        WHERE r.reservation_uuid = ? AND u.email = ? AND r.status = 'SUCCESS'
+        LIMIT 1
+      `, [ticketNumber, email]);
+
+      if (rows.length === 0) {
+        return res.status(404).json({ message: '일치하는 결제 완료 내역이 없거나 정보가 올바르지 않습니다.' });
+      }
+
+      return res.json(rows[0]);
+    } catch (err) {
+      console.error('❌ [GET /api/reserve] 비회원 승차권 조회 오류:', err.message);
+      return res.status(500).json({ message: '승차권 조회 중 서버 오류가 발생했습니다.' });
+    }
+  }
+
+  return res.status(400).json({ message: '조회 파라미터(userId 또는 ticketNumber+email)가 필요합니다.' });
+});
+
 // 열차 조회 API (구간별 잔여석의 최솟값 계산 방식 + 열차 정보 추가)
 app.get('/api/trains/:trainId', async (req, res) => {
   const { trainId } = req.params;
