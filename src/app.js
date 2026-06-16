@@ -190,6 +190,7 @@ app.post('/api/auth/signup', async (req, res) => {
 // 로그인 API
 app.post('/api/auth/login', async (req, res) => {
   const { userId, password } = req.body;
+  // 일반 로그인 (ID/PW 방식)
   if (!userId || !password) {
     return res.status(400).json({ message: '아이디와 비밀번호를 입력해주세요.' });
   }
@@ -811,6 +812,77 @@ app.post('/api/reserve/confirm', authMiddleware, async (req, res) => {
   } catch (err) {
     console.error('서버 에러:', err);
     res.status(500).json({ message: '서버 내부 오류가 발생했습니다.' });
+  }
+});
+
+// 사용자의 예매 내역 전체 조회 API
+app.get('/api/reservations', authMiddleware, async (req, res) => {
+  const userId = req.userId; // authMiddleware에서 파싱된 cognito_sub 또는 mock_sub
+  try {
+    const [rows] = await pool.execute(`
+      SELECT 
+        r.id AS reservation_id,
+        r.reservation_uuid, 
+        r.start_station, 
+        r.end_station, 
+        r.status, 
+        r.created_at,
+        r.passenger_count,
+        t.train_number, 
+        t.departure_date, 
+        t.departure_time, 
+        t.arrival_time
+      FROM reservations r
+      JOIN trains t ON r.train_id = t.id
+      WHERE r.user_id = (SELECT id FROM users WHERE cognito_sub = ? LIMIT 1)
+      ORDER BY r.created_at DESC
+    `, [userId]);
+
+    res.json(rows);
+  } catch (err) {
+    console.error('❌ 예매 내역 조회 오류:', err);
+    res.status(500).json({ message: '예매 내역 조회 중 서버 오류가 발생했습니다.' });
+  }
+});
+
+// 🟢 평상시 및 비상시(Azure) 로그인 없이 단건 예매 정보만 확인하는 API
+app.post('/api/reservations/guest-lookup', async (req, res) => {
+  const { email, reservationId } = req.body;
+
+  if (!email || !reservationId) {
+    return res.status(400).json({ message: '예매 시 사용한 이메일과 예약 번호를 입력해주세요.' });
+  }
+
+  try {
+    const [rows] = await pool.execute(`
+      SELECT 
+        r.id AS reservation_id,
+        r.reservation_uuid, 
+        r.start_station, 
+        r.end_station, 
+        r.status, 
+        r.created_at,
+        r.passenger_count,
+        t.train_number, 
+        t.departure_date, 
+        t.departure_time, 
+        t.arrival_time,
+        u.name AS passenger_name
+      FROM reservations r
+      JOIN trains t ON r.train_id = t.id
+      JOIN users u ON r.user_id = u.id
+      WHERE r.reservation_uuid = ? AND u.email = ? AND r.status = 'SUCCESS'
+      LIMIT 1
+    `, [reservationId, email]);
+
+    if (rows.length === 0) {
+      return res.status(404).json({ message: '일치하는 결제 완료 내역이 없거나 정보가 올바르지 않습니다.' });
+    }
+
+    res.json({ success: true, data: rows[0] });
+  } catch (err) {
+    console.error('❌ 예매 정보 조회 오류:', err);
+    res.status(500).json({ message: '예매 정보 조회 중 서버 오류가 발생했습니다.' });
   }
 });
 
