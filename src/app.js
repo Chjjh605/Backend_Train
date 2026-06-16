@@ -103,14 +103,14 @@ const ensureUserColumns = async () => {
         console.log("ℹ️ [DB] Adding 'username' column to 'users' table...");
         await connection.execute("ALTER TABLE users ADD COLUMN username VARCHAR(255) NULL UNIQUE");
       }
-      
+
       // reservations 테이블에 passenger_count 컬럼이 존재하는지 확인 및 추가
       const [resCols] = await connection.execute("SHOW COLUMNS FROM reservations LIKE 'passenger_count'");
       if (resCols.length === 0) {
         console.log("ℹ️ [DB] Adding 'passenger_count' column to 'reservations' table...");
         await connection.execute("ALTER TABLE reservations ADD COLUMN passenger_count INT NOT NULL DEFAULT 1");
       }
-      
+
       console.log("✅ [DB] 회원 및 예약 테이블 스키마 검증 완료!");
     } finally {
       connection.release();
@@ -221,19 +221,20 @@ app.get('/health', (req, res) => {
 // Redis 캐시 서버 연결 (로컬 환경일 때는 Standalone으로, AWS EKS 배포 환경에서는 ElastiCache Redis Cluster TLS 연결)
 const isLocalRedis = config.redis.host === '127.0.0.1' || config.redis.host === 'localhost';
 const redis = isLocalRedis
-  ? new Redis({ host: config.redis.host, port: config.redis.port })
+  ? new Redis({ host: config.redis.host, port: config.redis.port, enableOfflineQueue: false })
   : new Redis.Cluster(
-      [{ host: config.redis.host, port: config.redis.port }],
-      {
-        dnsLookup: (address, callback) => callback(null, address),
-        redisOptions: {
-          tls: {
-            // 클러스터 노드가 IP로 반환되더라도 TLS 호스트네임 검증을 통과하도록 설정
-            checkServerIdentity: () => undefined
-          }
+    [{ host: config.redis.host, port: config.redis.port }],
+    {
+      dnsLookup: (address, callback) => callback(null, address),
+      enableOfflineQueue: false,
+      redisOptions: {
+        tls: {
+          // 클러스터 노드가 IP로 반환되더라도 TLS 호스트네임 검증을 통과하도록 설정
+          checkServerIdentity: () => undefined
         }
       }
-    );
+    }
+  );
 
 redis.on('connect', () => console.log('⚡ Redis 캐시 서버 연결 완료!'));
 redis.on('error', (err) => {
