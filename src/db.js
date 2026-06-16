@@ -18,9 +18,21 @@ const pool = mysql.createPool({
 
 // 테이블 스키마 자동 업그레이드 함수 (일반 로그인용 필드 추가)
 const ensureUserColumns = async () => {
+  if (process.env.READ_ONLY_MODE === 'true') {
+    console.log("ℹ️ [DB] 시스템이 READ_ONLY_MODE(DR 대기 모드)입니다. 스키마 초기화 및 업그레이드를 건너뜁니다.");
+    return;
+  }
+
   try {
     const connection = await pool.getConnection();
     try {
+      // DB 자체의 Read-Only 상태 검증
+      const [readOnlyRows] = await connection.execute("SELECT @@global.read_only AS read_only");
+      if (readOnlyRows && readOnlyRows[0] && readOnlyRows[0].read_only === 1) {
+        console.log("ℹ️ [DB] 데이터베이스가 읽기 전용(Read-Only Replica) 상태입니다. 스키마 초기화 및 업그레이드를 건너뜁니다.");
+        return;
+      }
+
       // 서버 시작 시 데이터베이스 스키마 및 초기 데이터 자동 주입
       const fs = require('fs');
       const path = require('path');

@@ -54,8 +54,8 @@ CREATE TABLE reservations (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 INSERT IGNORE INTO users (id, cognito_sub, email, name, username, password) VALUES 
-(1, 'e9a6f3b0-4f51-4b7b-8c88-e9f06a1f81d1', 'whwogus2483@naver.com', '한지혁', 'test01', '1234'),
-(2, 'd4e5f6a7-b8c9-0d1e-2f3a-4b5c6d7e8f9a', 'chjjh605@gmail.com', '정소윤', 'test02', '1234');
+(1, 'e9a6f3b0-4f51-4b7b-8c88-e9f06a1f81d1', 'whwogus2483@naver.com', '한지혁', 'test01', 'Password123!'),
+(2, 'd4e5f6a7-b8c9-0d1e-2f3a-4b5c6d7e8f9a', 'chjjh605@gmail.com', '정소윤', 'test02', 'Password123!');
 
 -- 2026-06-19
 -- 1번 열차 (KTX-001, 출발 08:12, 도착 10:49)

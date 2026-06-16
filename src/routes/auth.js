@@ -30,11 +30,30 @@ const authMiddleware = async (req, res, next) => {
   if (isMock) {
     // Mock 모드: 바디/쿼리/헤더에서 userId를 획득하고 없으면 테스트용 UUID 기본 사용
     const authHeader = req.headers.authorization;
+    let userId = 'e9a6f3b0-4f51-4b7b-8c88-e9f06a1f81d1'; // 기본 데모 유저 UUID
+
     if (authHeader && authHeader.startsWith("Bearer ")) {
-      req.userId = authHeader.split(" ")[1];
+      const token = authHeader.split(" ")[1];
+      
+      // 만약 토큰이 JWT 포맷(점 2개 포함)인 경우, 서명 검증 없이 페이로드 디코딩하여 sub(UUID) 추출
+      if (token && token.split('.').length === 3) {
+        try {
+          const payloadPart = token.split('.')[1];
+          const decodedPayload = JSON.parse(Buffer.from(payloadPart, 'base64').toString('utf8'));
+          userId = decodedPayload.sub || token;
+          console.log(`ℹ️ [Mock Auth] JWT 토큰 디코딩 성공. 추출된 sub: ${userId}`);
+        } catch (err) {
+          console.warn("⚠️ [Mock Auth] JWT 디코딩 실패, 토큰 원본을 사용합니다:", err.message);
+          userId = token;
+        }
+      } else {
+        userId = token;
+      }
     } else {
-      req.userId = req.body.userId || req.query.userId || 'e9a6f3b0-4f51-4b7b-8c88-e9f06a1f81d1';
+      userId = req.body.userId || req.query.userId || userId;
     }
+
+    req.userId = userId;
     return next();
   }
 
