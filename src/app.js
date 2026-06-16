@@ -225,6 +225,7 @@ const redis = isLocalRedis
   : new Redis.Cluster(
       [{ host: config.redis.host, port: config.redis.port }],
       {
+        dnsLookup: (address, callback) => callback(null, address),
         redisOptions: {
           tls: {
             // 클러스터 노드가 IP로 반환되더라도 TLS 호스트네임 검증을 통과하도록 설정
