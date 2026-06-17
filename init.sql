@@ -1,5 +1,5 @@
 -- users (회원 테이블)
-CREATE TABLE users (
+CREATE TABLE IF NOT EXISTS users (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
     cognito_sub VARCHAR(255) NOT NULL UNIQUE, -- AWS Cognito JWT 검증용 식별자 (자동으로 Unique Index 생성됨)
     email VARCHAR(255) NOT NULL UNIQUE,       -- SES 발송용 이메일
@@ -11,7 +11,7 @@ CREATE TABLE users (
 
 
 -- trains (기차 및 구간 정보 테이블)
-CREATE TABLE trains (
+CREATE TABLE IF NOT EXISTS trains (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
     train_number VARCHAR(50) NOT NULL,        -- 예: KTX-1001
     segment VARCHAR(50) NOT NULL,             -- 예: 서울-부산(전구간), 서울-대전, 대전-부산
@@ -24,7 +24,7 @@ CREATE TABLE trains (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- train_segments (구간별 상세 잔여석 테이블)
-CREATE TABLE train_segments (
+CREATE TABLE IF NOT EXISTS train_segments (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
     train_id BIGINT NOT NULL,
     start_station VARCHAR(50) NOT NULL,       -- 예: SEOUL, DAEJEON, DAEGU
@@ -36,7 +36,7 @@ CREATE TABLE train_segments (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- reservations (예매 내역 테이블 - 최종 영수증)
-CREATE TABLE reservations (
+CREATE TABLE IF NOT EXISTS reservations (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
     reservation_uuid VARCHAR(36) NOT NULL UNIQUE, -- 클라이언트/서버 생성 고유 예약 식별자
     user_id BIGINT NOT NULL,                  -- users 테이블 참조 (FK)

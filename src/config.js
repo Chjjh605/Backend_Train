@@ -21,6 +21,7 @@ module.exports = {
   },
   redis: {
     host: process.env.REDIS_HOST, // AWS ElastiCache 연결을 위해 필수 주입
-    port: parseInt(process.env.REDIS_PORT, 10) || 6379
+    port: parseInt(process.env.REDIS_PORT, 10) || 6379,
+    password: process.env.REDIS_AUTH_TOKEN
   }
 };
