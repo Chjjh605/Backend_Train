@@ -15,7 +15,7 @@ router.post('/reserve', authMiddleware, async (req, res) => {
   }
 
   const userId = req.userId;
-  const { trainId, startStation, endStation, passengerCount } = req.body;
+  const { trainId, startStation, endStation, passengerCount, passenger } = req.body;
   const count = parseInt(passengerCount, 10) || 1;
 
   if (!userId || !trainId || !startStation || !endStation) {
@@ -114,8 +114,12 @@ router.post('/reserve', authMiddleware, async (req, res) => {
     console.error('⚠️ [Reserve] 캐시 워밍 중 에러 발생 (작업 계속 진행):', cacheErr.message);
   }
 
-  // 2. 고유 예약 식별자 UUID 생성
-  const reservationId = crypto.randomUUID();
+  // 2. 고유 예약 식별자 UUID 생성 (뒷자리에 승객 구성 데이터를 인코딩하여 DB 스키마 변경 방지)
+  const baseUuid = crypto.randomUUID();
+  const suffix = passenger
+    ? `a${passenger.adult || 0}c${passenger.child || 0}i${passenger.infant || 0}s${passenger.senior || 0}`
+    : `a${count}c0i0s0`;
+  const reservationId = baseUuid.substring(0, 28) + suffix;
   const userKey = `{train:${trainId}}:user:${dbUserId}:${reservationId}`;
   let isReservedInRedis = false;
 
