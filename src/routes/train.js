@@ -599,10 +599,76 @@ router.post('/reserve/confirm', authMiddleware, async (req, res) => {
       // 4. 예매 완료 이메일 발송용 SQS 메시지 전송
       if (config.aws.mailQueueUrl) {
         try {
+          // 💡 일반 텍스트 대신 HTML 템플릿을 백틱으로 감싸서 문자열로 만듭니다.
+          const htmlMessage = `
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>승차권 예매 완료</title>
+</head>
+<body style="margin: 0; padding: 0; background-color: #f4f5f7; font-family: 'Apple SD Gothic Neo', 'Malgun Gothic', '맑은 고딕', sans-serif;">
+    <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color: #f4f5f7; padding: 40px 20px;">
+        <tr>
+            <td align="center">
+                <table width="600" cellpadding="0" cellspacing="0" border="0" style="background-color: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 15px rgba(0,0,0,0.05);">
+                    <tr>
+                        <td style="background-color: #1A365D; padding: 30px; text-align: center;">
+                            <h1 style="color: #ffffff; margin: 0; font-size: 24px; font-weight: bold; letter-spacing: 1px;">
+                                Team Train
+                            </h1>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td style="padding: 40px 30px;">
+                            <p style="margin: 0 0 25px 0; font-size: 18px; color: #2d3748; line-height: 1.6;">
+                                안녕하세요 <strong>${userName}</strong> 고객님,<br>
+                                승차권 결제 및 예매가 성공적으로 완료되었습니다.
+                            </p>
+                            <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 25px; margin: 30px 0;">
+                                <h3 style="margin: 0 0 20px 0; color: #1A365D; font-size: 18px; border-bottom: 2px solid #e2e8f0; padding-bottom: 12px;">
+                                    예매 상세 정보
+                                </h3>
+                                <table width="100%" cellpadding="0" cellspacing="0" border="0" style="font-size: 16px; line-height: 2.0; color: #4a5568;">
+                                    <tr>
+                                        <td width="30%" style="font-weight: bold; padding-bottom: 10px; color: #2d3748;">예약 번호</td>
+                                        <td width="70%" style="padding-bottom: 10px; word-break: break-all;">${reservationId}</td>
+                                    </tr>
+                                    <tr>
+                                        <td style="font-weight: bold; padding-bottom: 10px; color: #2d3748;">열차 정보</td>
+                                        <td style="padding-bottom: 10px;">${trainId}번 열차</td>
+                                    </tr>
+                                    <tr>
+                                        <td style="font-weight: bold; color: #2d3748;">구간</td>
+                                        <td style="font-weight: bold; color: #3182ce;">${startStation} -> ${endStation}</td>
+                                    </tr>
+                                </table>
+                            </div>
+                            <p style="margin: 0; font-size: 17px; color: #4a5568; text-align: center; margin-top: 40px; font-weight: 500;">
+                                안전하고 즐거운 여행 되시길 바랍니다! 🚆
+                            </p>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td style="background-color: #f8fafc; padding: 25px; text-align: center; border-top: 1px solid #e2e8f0;">
+                            <p style="margin: 0; font-size: 13px; color: #a0aec0; line-height: 1.5;">
+                                본 메일은 발신 전용이므로 회신되지 않습니다.<br>
+                                © 2026 Team Train. All rights reserved.
+                            </p>
+                        </td>
+                    </tr>
+                </table>
+            </td>
+        </tr>
+    </table>
+</body>
+</html>`;
+
           const mailPayload = JSON.stringify({
             to: userEmail,
             subject: `[열차 예매 완료] ${userName}님, 승차권 결제가 완료되었습니다.`,
-            message: `안녕하세요 ${userName} 고객님,\n\n승차권 결제 및 예매가 완료되었습니다.\n\n[예매 상세 정보]\n- 예약 번호: ${reservationId}\n- 열차 정보: ${trainId}번 열차\n- 구간: ${startStation} -> ${endStation}\n\n즐거운 여행 되시길 바랍니다!`
+            message: htmlMessage // 텍스트 대신 HTML 템플릿 변수를 담아줍니다.
           });
 
           await sqsClient.send(new SendMessageCommand({
