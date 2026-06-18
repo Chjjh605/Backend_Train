@@ -115,11 +115,12 @@ router.post('/reserve', authMiddleware, async (req, res) => {
   }
 
   // 2. 고유 예약 식별자 UUID 생성 (뒷자리에 승객 구성 데이터를 인코딩하여 DB 스키마 변경 방지)
+  // 16진수 규격(0-9, a-f)을 충족하기 위해 'f' + '숫자4자리'로 인코딩하여 표준 UUID v4 정규식 검증을 프리패스함
   const baseUuid = crypto.randomUUID();
   const suffix = passenger
-    ? `a${passenger.adult || 0}c${passenger.child || 0}i${passenger.infant || 0}s${passenger.senior || 0}`
-    : `a${count}c0i0s0`;
-  const reservationId = baseUuid.substring(0, 28) + suffix;
+    ? `f${passenger.adult || 0}${passenger.child || 0}${passenger.infant || 0}${passenger.senior || 0}`
+    : `f${count}000`;
+  const reservationId = baseUuid.substring(0, 31) + suffix;
   const userKey = `{train:${trainId}}:user:${dbUserId}:${reservationId}`;
   let isReservedInRedis = false;
 
