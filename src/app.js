@@ -10,10 +10,13 @@ const app = express();
 // ALLOWED_ORIGINS가 쉼표로 구분된 여러 도메인일 경우 배열로 파싱하여 허용
 const origins = config.allowedOrigins
   ? (config.allowedOrigins.includes(',') ? config.allowedOrigins.split(',') : config.allowedOrigins)
-  : '*';
+  : ['https://team-train.cloud', 'http://localhost:5173', 'http://localhost:3000'];
 
 app.use(cors({
-  origin: origins,
+  origin: (origin, callback) => {
+    // 브라우저의 Credentials 요청에 대응하기 위해 요청 Origin을 동적으로 에코잉 허용
+    callback(null, true);
+  },
   credentials: true
 }));
 app.use(express.json());
