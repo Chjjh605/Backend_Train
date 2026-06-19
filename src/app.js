@@ -23,7 +23,10 @@ app.get('/health', (req, res) => {
   if (process.env.HEALTH_FAIL === 'true') {
     return res.status(500).send('FAIL');
   }
-  res.status(200).send('OK');
+  res.status(200).json({
+    status: 'OK',
+    readOnlyMode: process.env.READ_ONLY_MODE || 'undefined'
+  });
 });
 
 // 라우터 마운트
